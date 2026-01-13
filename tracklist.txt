@@ -1,0 +1,48 @@
+Tracks listed in alphabetical order by Primary name.
+
+                   Track Name                   | Length |Reverse Layout
+              Apricot Hill Raceway              | 2.40 Mi|     Yes
+                   Autumn Ring                  | 1.83 Mi|     Yes
+                Autumn Ring Mini                | 0.80 Mi|     Yes
+          Driving Park Beginner Course          | 0.48 Mi|     Yes
+                   Cote d'Azur                  | 2.08 Mi|     No
+             Cathedral Rocks Trail I            | 2.19 Mi|     Yes
+            Cathedral Rocks Trail II            | 1.20 Mi|     Yes
+            Cathedral Rocks Trail III           | 0.50 Mi|     Yes
+                    Chamonix                    | 2.00 Mi|     Yes
+Circuit de la Comunitat Valenciana Ricardo Tormo| 2.49 Mi|     No
+            Circuit de la Sarthe Old            | 8.44 Mi|     No
+            Circuit de la Sarthe 2005           | 8.48 Mi|     No
+                  Citta de Aria                 | 2.11 Mi|     Yes
+                 Costa di Amalfi                | 2.50 Mi|     Yes
+               Deep Forest Raceway              | 2.24 Mi|     Yes
+                   El Capitan                   | 2.98 Mi|     Yes
+               Fuji Speedway 2005               | 2.84 Mi|     No
+               Fuji Speedway 90's               | 2.73 Mi|     No
+                  Grand Canyon                  | 2.20 Mi|     Yes
+              Grand Valley Speedway             | 3.07 Mi|     Yes
+                Grand Valley East               | 1.86 Mi|     Yes
+                 High Speed Ring                | 2.49 Mi|     Yes
+                    Ice Arena                   | 0.64 Mi|     Yes
+                Infineon Raceway                | 2.52 Mi|     No
+            Mazda Raceway Laguna Seca           | 2.24 Mi|     No
+                Mid-Field Raceway               | 2.21 Mi|     Yes
+             Driving Park Motorland             | 0.83 Mi|     Yes
+                     New York                    | 2.59 Mi|     Yes
+            Nurburgring Nordschleife            |12.95 Mi|     No
+                   Opera Paris                  | 1.79 Mi|     Yes
+                 Seattle Circuit                | 2.37 Mi|     Yes
+                  Seoul Central                 | 1.69 Mi|     Yes
+                 Suzuka Circuit                 | 3.61 Mi|     No
+           Suzuka Circuit East Course           | 1.39 Mi|     No
+           Suzuka Circuit West Course           | 2.16 Mi|     No
+                   Swiss Alps                   | 2.05 Mi|     Yes
+                   Tahiti Maze                  | 2.24 Mi|     Yes
+            Driving Park Test Course            | 6.43 Mi|     No
+                 Tokyo Route 246                | 3.18 Mi|     Yes
+             Trial Mountain Circuit             | 2.47 Mi|     Yes
+                 Tsukuba Circuit                | 1.27 Mi|     No
+       Twin Ring Motegi East Short Course       | 2.13 Mi|     No
+          Twin Ring Motegi Road Course          | 2.98 Mi|     No
+         Twin Ring Motegi Super Speedway        | 1.50 Mi|     No
+       Twin Ring Motegi West Short Course       | 0.93 Mi|     No

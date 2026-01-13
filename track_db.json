@@ -1,0 +1,227 @@
+[
+  {
+    "id": 0,
+    "name": "Apricot Hill Raceway",
+    "length": "2.40 Mi"
+  },
+  {
+    "id": 1,
+    "name": "Autumn Ring",
+    "length": "1.83 Mi"
+  },
+  {
+    "id": 2,
+    "name": "Autumn Ring Mini",
+    "length": "0.80 Mi"
+  },
+  {
+    "id": 3,
+    "name": "Driving Park Beginner Course",
+    "length": "0.48 Mi"
+  },
+  {
+    "id": 4,
+    "name": "Cote d'Azur",
+    "length": "2.08 Mi"
+  },
+  {
+    "id": 5,
+    "name": "Cathedral Rocks Trail I",
+    "length": "2.19 Mi"
+  },
+  {
+    "id": 6,
+    "name": "Cathedral Rocks Trail II",
+    "length": "1.20 Mi"
+  },
+  {
+    "id": 7,
+    "name": "Cathedral Rocks Trail III",
+    "length": "0.50 Mi"
+  },
+  {
+    "id": 8,
+    "name": "Chamonix",
+    "length": "2.00 Mi"
+  },
+  {
+    "id": 9,
+    "name": "Circuit de la Comunitat Valenciana Ricardo Tormo",
+    "length": "2.49 Mi"
+  },
+  {
+    "id": 10,
+    "name": "Circuit de la Sarthe Old",
+    "length": "8.44 Mi"
+  },
+  {
+    "id": 11,
+    "name": "Circuit de la Sarthe 2005",
+    "length": "8.48 Mi"
+  },
+  {
+    "id": 12,
+    "name": "Citta de Aria",
+    "length": "2.11 Mi"
+  },
+  {
+    "id": 13,
+    "name": "Costa di Amalfi",
+    "length": "2.50 Mi"
+  },
+  {
+    "id": 14,
+    "name": "Deep Forest Raceway",
+    "length": "2.24 Mi"
+  },
+  {
+    "id": 15,
+    "name": "El Capitan",
+    "length": "2.98 Mi"
+  },
+  {
+    "id": 16,
+    "name": "Fuji Speedway 2005",
+    "length": "2.84 Mi"
+  },
+  {
+    "id": 17,
+    "name": "Fuji Speedway 90's",
+    "length": "2.73 Mi"
+  },
+  {
+    "id": 18,
+    "name": "Grand Canyon",
+    "length": "2.20 Mi"
+  },
+  {
+    "id": 19,
+    "name": "Grand Valley Speedway",
+    "length": "3.07 Mi"
+  },
+  {
+    "id": 20,
+    "name": "Grand Valley East",
+    "length": "1.86 Mi"
+  },
+  {
+    "id": 21,
+    "name": "High Speed Ring",
+    "length": "2.49 Mi"
+  },
+  {
+    "id": 22,
+    "name": "Ice Arena",
+    "length": "0.64 Mi"
+  },
+  {
+    "id": 23,
+    "name": "Infineon Raceway",
+    "length": "2.52 Mi"
+  },
+  {
+    "id": 24,
+    "name": "Mazda Raceway Laguna Seca",
+    "length": "2.24 Mi"
+  },
+  {
+    "id": 25,
+    "name": "Mid-Field Raceway",
+    "length": "2.21 Mi"
+  },
+  {
+    "id": 26,
+    "name": "Driving Park Motorland",
+    "length": "0.83 Mi"
+  },
+  {
+    "id": 27,
+    "name": "New York",
+    "length": "2.59 Mi"
+  },
+  {
+    "id": 28,
+    "name": "Nurburgring Nordschleife",
+    "length": "12.95 Mi"
+  },
+  {
+    "id": 29,
+    "name": "Opera Paris",
+    "length": "1.79 Mi"
+  },
+  {
+    "id": 30,
+    "name": "Seattle Circuit",
+    "length": "2.37 Mi"
+  },
+  {
+    "id": 31,
+    "name": "Seoul Central",
+    "length": "1.69 Mi"
+  },
+  {
+    "id": 32,
+    "name": "Suzuka Circuit",
+    "length": "3.61 Mi"
+  },
+  {
+    "id": 33,
+    "name": "Suzuka Circuit East Course",
+    "length": "1.39 Mi"
+  },
+  {
+    "id": 34,
+    "name": "Suzuka Circuit West Course",
+    "length": "2.16 Mi"
+  },
+  {
+    "id": 35,
+    "name": "Swiss Alps",
+    "length": "2.05 Mi"
+  },
+  {
+    "id": 36,
+    "name": "Tahiti Maze",
+    "length": "2.24 Mi"
+  },
+  {
+    "id": 37,
+    "name": "Driving Park Test Course",
+    "length": "6.43 Mi"
+  },
+  {
+    "id": 38,
+    "name": "Tokyo Route 246",
+    "length": "3.18 Mi"
+  },
+  {
+    "id": 39,
+    "name": "Trial Mountain Circuit",
+    "length": "2.47 Mi"
+  },
+  {
+    "id": 40,
+    "name": "Tsukuba Circuit",
+    "length": "1.27 Mi"
+  },
+  {
+    "id": 41,
+    "name": "Twin Ring Motegi East Short Course",
+    "length": "2.13 Mi"
+  },
+  {
+    "id": 42,
+    "name": "Twin Ring Motegi Road Course",
+    "length": "2.98 Mi"
+  },
+  {
+    "id": 43,
+    "name": "Twin Ring Motegi Super Speedway",
+    "length": "1.50 Mi"
+  },
+  {
+    "id": 44,
+    "name": "Twin Ring Motegi West Short Course",
+    "length": "0.93 Mi"
+  }
+]

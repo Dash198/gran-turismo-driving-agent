@@ -47,3 +47,26 @@ First, trying ResNet 18 for perception.
 
 3. **Reward Shaping**
     Yet to decide.
+
+
+# Model 1: NitroGen-based Agent
+This directory (`Model1`) contains all work related to the Neural Time Trial agent based on NVIDIA's NitroGen foundation model.
+
+## Structure
+- `Phase_1/`: Baselines, Calibration, and Naive Integration (Completed).
+- `Phase_2/`: Residual Learning (Active).
+
+## Phase 1: Naive Integration (Completed)
+We validated that NitroGen can drive the car using a "Discrete Mapping" wrapper. 
+- **Performance**: ~2.5 min lap time (Conservative).
+- **Issues**: Slow speeds due to braking priority and oscillation.
+- **Fix**: Implemented Trajectory Averaging (0.3s window) and Aggressive Throttle Threshold (0.3).
+
+## Phase 2: Residual Learning (Current)
+Instead of fine-tuning NitroGen (which destroys priors), we train a lightweight **Residual Policy** (PPO) to correct its actions.
+
+### Architecture
+- **Base**: Frozen NitroGen (bfloat16).
+- **Residual**: Tiny CNN (NatureCNN).
+- **Action**: $A_{final} = A_{base} + \Delta_{residual}$
+- **Objective**: Minimize Lap Time while keeping $||\Delta_{residual}||$ low to preserve safety.
