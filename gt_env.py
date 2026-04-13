@@ -1,10 +1,7 @@
 """
-GranTurismoEnv v2 — Paper-Aligned
-──────────────────────────────────
-- Raw 64×64 RGB observation (CNN learns features)
-- Progress-dominated reward (papers' approach)
-- Steering/gas history in aux vector (proprioception)
-- Simplified terminations
+GranTurismoEnv v3 — Hybrid
+───────────────────────────
+v1 observations (masks) + v2 reward/hyperparams + wrong-direction termination.
 """
 
 import time
@@ -27,7 +24,7 @@ class GranTurismoEnv(gym.Env):
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
 
-        # Observation: 64×64 RGB frame + proprioceptive aux vector
+        # Dict observation: mask channels + proprioceptive aux
         self.observation_space = spaces.Dict(
             {
                 "frame": spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
@@ -40,23 +37,24 @@ class GranTurismoEnv(gym.Env):
         self.current_step = 0
         self.stuck_frames = 0
         self.loiter_frames = 0
+        self.wrong_dir_frames = 0
         self.episode_reward = 0.0
         self.current_speed = 0
         self.prev_progress = 0.0
         self.estimated_speed = 0.0
 
-        # Position tracking
+        # Buffers
         self.pos_buffer = deque(maxlen=100)
         self.progress_buffer = deque(maxlen=5)
 
-        # Action history (for proprioceptive aux — Paper 1 uses 3-step history)
+        # Action history (Paper 1: 3-step steering + gas history)
         self.steer_history = deque([0.0, 0.0, 0.0], maxlen=3)
         self.gas_history = deque([0.0, 0.0, 0.0], maxlen=3)
 
         # Temporal
         self.last_step_time = time.time()
 
-        # Curriculum tracking
+        # Curriculum
         self.curriculum_stage = 1
         self.lap_completions = 0
         self.episode_count = 0
@@ -68,6 +66,7 @@ class GranTurismoEnv(gym.Env):
         self.GRACE_PERIOD = 10.0
         self.STUCK_TOLERANCE = 10.0
         self.LOITER_TOLERANCE = 15.0
+        self.WRONG_DIR_TOLERANCE = 5.0    # NEW: kill if driving backward
 
     def _print_episode_stats(self, reason):
         print("\n" + "=" * 45)
@@ -91,8 +90,6 @@ class GranTurismoEnv(gym.Env):
         # 1. ACT
         steer, gas = float(action[0]), float(action[1])
         self.controller.step(steering=steer, gas_brake=gas)
-
-        # Record action history AFTER acting
         self.steer_history.append(steer)
         self.gas_history.append(gas)
 
@@ -101,13 +98,13 @@ class GranTurismoEnv(gym.Env):
         if raw_frame is None:
             return self._get_empty_obs(), 0.0, True, False, {"reason": "CAMERA_LOST"}
 
-        # 3. FRAME FOR CNN — 64×64 RGB crop
-        obs_frame = self.vision.get_obs_frame(raw_frame)
-
-        # 4. TELEMETRY
+        # 3. VISION — each channel computed once
+        line_channel, line_pos = self.vision.get_line_channel(raw_frame)
+        road_channel = self.vision.get_road_channel(raw_frame)
+        brake_channel = self.vision.get_brake_channel(raw_frame)
         is_collision = self.vision.check_collision(raw_frame)
 
-        # Progress (smoothed)
+        # 4. PROGRESS (smoothed)
         progress_data = self.vision.get_progress_percent(raw_frame)
         raw_progress = (
             progress_data[0]
@@ -117,7 +114,7 @@ class GranTurismoEnv(gym.Env):
         self.progress_buffer.append(raw_progress)
         current_progress = float(np.median(list(self.progress_buffer)))
 
-        # Displacement (for stuck detection)
+        # 5. DISPLACEMENT
         current_pos = self.vision.get_map_position(raw_frame)
         if current_pos is not None:
             self.pos_buffer.append(current_pos)
@@ -130,7 +127,6 @@ class GranTurismoEnv(gym.Env):
                 np.array(self.pos_buffer[-1]) - np.array(self.pos_buffer[0])
             )
 
-        # Estimated speed (for aux vector)
         if len(self.pos_buffer) >= 2:
             instant_disp = np.linalg.norm(
                 np.array(self.pos_buffer[-1]) - np.array(self.pos_buffer[-2])
@@ -139,35 +135,36 @@ class GranTurismoEnv(gym.Env):
             instant_disp = 0.0
         self.estimated_speed = instant_disp / dt
 
-        # ═══════════════════════════════════════════
-        # 5. REWARD — Progress-dominated (Paper-aligned)
-        # ═══════════════════════════════════════════
+        # ═══════════════════════════════════
+        # 6. REWARD — progress-dominated
+        # ═══════════════════════════════════
 
-        # A. Progress — THE primary signal
+        # A. Progress — primary signal
         progress_delta = current_progress - self.prev_progress
         if progress_delta < -0.5:  # Lap wraparound
             progress_delta = (1.0 - self.prev_progress) + current_progress
-        progress_delta = max(progress_delta, -0.05)  # Clamp backward
+        progress_delta = max(progress_delta, -0.1)
         r_progress = progress_delta * 500.0
         self.prev_progress = current_progress
 
-        # B. Collision penalty — proportional to speed² (Paper 2)
+        # B. Collision — proportional to speed² (Paper 2 style)
         r_collision = 0.0
         if is_collision:
             spd = self.estimated_speed
             r_collision = -max(10.0, spd * spd * 0.01)
 
-        # C. Steering change penalty (Paper 1: r_s = -|θ_t - θ_{t-1}|)
-        steer_delta = abs(steer - self.steer_history[-2])  # -2 because -1 is current
+        # C. Steering change penalty (Paper 1: r_s = -|Δθ|)
+        steer_delta = abs(steer - self.steer_history[-2])
         r_steer = -steer_delta * 1.0
 
         reward = r_progress + r_collision + r_steer
 
-        # 6. TERMINATIONS
+        # 7. TERMINATIONS
         terminated = False
         reason = ""
+        in_grace = self.current_step < int(self.GRACE_PERIOD * fps)
 
-        # OCR speed (every 30 steps)
+        # OCR speed + lap check (every 30 steps)
         if self.current_step % 30 == 0:
             self.current_speed = self.vision.get_speed(raw_frame)
             if self.vision.check_lap_change(
@@ -178,9 +175,9 @@ class GranTurismoEnv(gym.Env):
                 reason = "LAP COMPLETED"
                 self._update_curriculum(lap_completed=True)
 
-            # Loiter check (OCR speed, after grace)
+            # Loiter check (after grace)
             ocr_speed = self.current_speed if self.current_speed is not None else 0
-            if self.current_step > int(self.GRACE_PERIOD * fps):
+            if not in_grace:
                 if ocr_speed < 5:
                     self.loiter_frames += 30
                 else:
@@ -189,35 +186,47 @@ class GranTurismoEnv(gym.Env):
                 self.loiter_frames = 0
 
         if not terminated:
-            # Stuck: low displacement over long window
-            if displacement < 1.0:
+            # Stuck: low displacement
+            if displacement < 1.0 and not in_grace:
                 self.stuck_frames += 1
                 if self.stuck_frames > (self.STUCK_TOLERANCE * fps):
                     reward += -500.0
                     terminated = True
-                    reason = "STUCK POSITION"
+                    reason = "STUCK"
             else:
                 self.stuck_frames = 0
 
-            # Loiter: OCR says car isn't moving
+            # Loiter: OCR says not moving
             if self.loiter_frames > (self.LOITER_TOLERANCE * fps):
                 reward += -500.0
                 terminated = True
                 reason = "LOITERING"
+
+            # Wrong direction: negative progress for too long
+            if progress_delta < -0.001 and not in_grace:
+                self.wrong_dir_frames += 1
+                if self.wrong_dir_frames > (self.WRONG_DIR_TOLERANCE * fps):
+                    reward += -300.0
+                    terminated = True
+                    reason = "WRONG DIRECTION"
+            else:
+                self.wrong_dir_frames = 0
 
             # Max steps
             if self.current_step >= self.max_steps:
                 terminated = True
                 reason = "MAX_STEPS"
 
-        # 7. BUILD OBS
+        # 8. BUILD OBS
+        frame_obs = np.stack([line_channel, road_channel, brake_channel], axis=-1)
         aux = self._build_aux()
-        obs = {"frame": obs_frame, "aux": aux}
+        obs = {"frame": frame_obs, "aux": aux}
 
-        # 8. RENDER
+        # 9. RENDER (throttled)
         if self.current_step % self.render_interval == 0:
             self._render_dashboard(
-                obs_frame=obs_frame,
+                obs_frame=frame_obs,
+                l_pos=line_pos,
                 rew=reward,
                 action=action,
                 fps=fps,
@@ -230,10 +239,12 @@ class GranTurismoEnv(gym.Env):
                 s_max=int(self.STUCK_TOLERANCE * fps),
                 l_frames=self.loiter_frames,
                 l_max=int(self.LOITER_TOLERANCE * fps),
+                w_frames=self.wrong_dir_frames,
+                w_max=int(self.WRONG_DIR_TOLERANCE * fps),
+                has_line=(line_pos is not None),
             )
 
         self.episode_reward += reward
-
         if terminated:
             self._print_episode_stats(reason)
             self._check_curriculum_advance()
@@ -242,18 +253,14 @@ class GranTurismoEnv(gym.Env):
 
     def _build_aux(self):
         """
-        8-dim proprioceptive vector (Paper 1 inspired):
-          [speed_norm, progress,
-           steer_t-1, steer_t-2, steer_t-3,
-           gas_t-1, gas_t-2, gas_t-3]
+        8-dim proprioceptive vector:
+          [speed, progress, steer×3, gas×3]
         """
         speed_norm = min(1.0, self.estimated_speed / 50.0)
-        progress = self.prev_progress
-
         return np.array([
             speed_norm,
-            progress,
-            self.steer_history[-1],  # most recent
+            self.prev_progress,
+            self.steer_history[-1],
             self.steer_history[-2],
             self.steer_history[-3],
             self.gas_history[-1],
@@ -262,90 +269,100 @@ class GranTurismoEnv(gym.Env):
         ], dtype=np.float32)
 
     def _render_dashboard(
-        self, obs_frame, rew, action, fps, crash,
-        r_prog, r_coll, r_steer,
-        displacement, s_frames, s_max, l_frames, l_max,
+        self, obs_frame, l_pos, rew, action, fps, crash,
+        r_prog, r_coll, r_steer, displacement,
+        s_frames, s_max, l_frames, l_max, w_frames, w_max, has_line,
     ):
         try:
-            W, H = 420, 340
+            W, H = 480, 380
             db = np.zeros((H, W, 3), dtype=np.uint8)
             f = cv2.FONT_HERSHEY_SIMPLEX
             WHITE = (220, 220, 220)
             DIM = (100, 100, 100)
             CYAN = (0, 255, 255)
 
-            # ── AGENT VISION (what CNN sees) ──
-            cv2.putText(db, "CNN INPUT (64x64 RGB)", (10, 14), f, 0.35, CYAN, 1)
-            preview = cv2.resize(obs_frame, (120, 120))
-            db[20:140, 10:130] = preview
+            # ── ROW 1: VISION CHANNELS ──
+            cv2.putText(db, "AGENT VISION", (10, 14), f, 0.35, CYAN, 1)
+            labels = ["LINE", "ROAD", "BRAKE", "STACK"]
+            colors = [(255, 200, 0), (0, 255, 0), (0, 0, 255), WHITE]
+            for i in range(3):
+                ch = cv2.cvtColor(obs_frame[:, :, i], cv2.COLOR_GRAY2BGR)
+                ch = cv2.resize(ch, (64, 64))
+                x0 = 10 + i * 74
+                db[20:84, x0:x0+64] = ch
+                cv2.putText(db, labels[i], (x0 + 15, 96), f, 0.28, colors[i], 1)
+            # Composite
+            rgb = cv2.resize(obs_frame, (64, 64))
+            db[20:84, 232:296] = rgb
+            cv2.putText(db, "STACK", (240, 96), f, 0.28, WHITE, 1)
 
             # ── STATS ──
-            sx = 150
+            sx = 320
             fps_col = (0, 255, 0) if fps > 10 else (0, 165, 255) if fps > 6 else (0, 0, 255)
-            cv2.putText(db, f"FPS: {fps:.0f}", (sx, 30), f, 0.5, fps_col, 2)
+            cv2.putText(db, f"FPS: {fps:.0f}", (sx, 28), f, 0.45, fps_col, 2)
 
             ocr_spd = self.current_speed if self.current_speed else 0
-            cv2.putText(db, f"SPD: {ocr_spd} km/h", (sx, 52), f, 0.35, WHITE, 1)
-            cv2.putText(db, f"STEP: {self.current_step}", (sx, 70), f, 0.33, DIM, 1)
-            cv2.putText(db, f"DISP: {displacement:.1f}", (sx, 88), f, 0.33, DIM, 1)
+            cv2.putText(db, f"SPD: {ocr_spd} km/h", (sx, 48), f, 0.33, WHITE, 1)
+            cv2.putText(db, f"STEP: {self.current_step}", (sx, 64), f, 0.3, DIM, 1)
+            cv2.putText(db, f"DISP: {displacement:.1f}", (sx, 80), f, 0.3, DIM, 1)
 
-            # Reward
             r_col = (0, 255, 0) if rew >= 0 else (0, 0, 255)
-            cv2.putText(db, f"REW: {rew:+.1f}", (sx, 120), f, 0.6, r_col, 2)
-            cv2.putText(db, f"EP: {self.episode_reward:+.0f}", (sx, 140), f, 0.33, DIM, 1)
+            cv2.putText(db, f"{rew:+.1f}", (sx, 110), f, 0.7, r_col, 2)
+            cv2.putText(db, f"EP: {self.episode_reward:+.0f}", (sx, 128), f, 0.3, DIM, 1)
 
-            # Status
             if crash:
                 status, st_col = "CRASH", (0, 0, 255)
+            elif not has_line:
+                status, st_col = "NO LINE", (0, 100, 255)
             elif rew > 0.1:
-                status, st_col = "PROGRESSING", (0, 255, 0)
+                status, st_col = "RACING", (0, 255, 0)
             else:
-                status, st_col = "EXPLORING", (200, 200, 200)
-            cv2.putText(db, status, (sx + 120, 30), f, 0.5, st_col, 2)
+                status, st_col = "DRIVING", (200, 200, 200)
+            cv2.putText(db, status, (sx, 155), f, 0.5, st_col, 2)
 
             # ── REWARDS ──
-            ry = 160
-            cv2.putText(db, "REWARDS", (10, ry), f, 0.35, CYAN, 1)
+            ry = 110
+            cv2.putText(db, "REWARDS", (10, ry), f, 0.33, CYAN, 1)
             def _rc(v):
                 return (0, 255, 0) if v > 0.01 else (0, 0, 255) if v < -0.01 else DIM
-            for i, (name, val) in enumerate([("Progress", r_prog), ("Collision", r_coll), ("Steer", r_steer)]):
+            for i, (name, val) in enumerate([("Progress", r_prog), ("Collision", r_coll), ("Steer Δ", r_steer)]):
                 y = ry + 15 + i * 16
-                cv2.putText(db, f"{name}:", (10, y), f, 0.3, DIM, 1)
-                cv2.putText(db, f"{val:+.2f}", (85, y), f, 0.3, _rc(val), 1)
-
+                cv2.putText(db, f"{name}:", (10, y), f, 0.28, DIM, 1)
+                cv2.putText(db, f"{val:+.3f}", (85, y), f, 0.28, _rc(val), 1)
             tot_y = ry + 15 + 3 * 16
-            cv2.line(db, (10, tot_y - 3), (150, tot_y - 3), (50, 50, 50), 1)
-            cv2.putText(db, f"TOTAL: {rew:+.2f}", (10, tot_y + 10), f, 0.35, r_col, 1)
+            cv2.line(db, (10, tot_y - 3), (160, tot_y - 3), (50, 50, 50), 1)
+            cv2.putText(db, f"TOTAL: {rew:+.3f}", (10, tot_y + 10), f, 0.33, r_col, 1)
 
             # ── TIMERS ──
-            ty = tot_y + 25
-            cv2.putText(db, "TIMERS", (10, ty), f, 0.35, CYAN, 1)
-            bar_w = 150
+            ty = tot_y + 22
+            cv2.putText(db, "TIMERS", (10, ty), f, 0.33, CYAN, 1)
+            bar_w = 140
             for i, (name, frames, limit, color) in enumerate([
                 ("STUCK", s_frames, s_max, (0, 165, 255)),
                 ("LOITER", l_frames, l_max, (0, 255, 255)),
+                ("WRONG", w_frames, w_max, (0, 0, 255)),
             ]):
-                y = ty + 15 + i * 20
-                cv2.putText(db, name, (10, y + 3), f, 0.28, DIM, 1)
-                cv2.rectangle(db, (60, y - 4), (60 + bar_w, y + 6), (30, 30, 30), -1)
+                y = ty + 14 + i * 18
+                cv2.putText(db, name, (10, y + 3), f, 0.26, DIM, 1)
+                cv2.rectangle(db, (60, y - 3), (60 + bar_w, y + 6), (30, 30, 30), -1)
                 fill = int((min(frames, limit) / max(1, limit)) * bar_w)
-                cv2.rectangle(db, (60, y - 4), (60 + fill, y + 6), color, -1)
+                cv2.rectangle(db, (60, y - 3), (60 + fill, y + 6), color, -1)
 
             # ── STEERING ──
-            sy = ty + 15 + 2 * 20 + 10
-            cv2.putText(db, "STEER", (10, sy), f, 0.28, DIM, 1)
-            cx = 140
-            cv2.line(db, (60, sy - 3), (220, sy - 3), (40, 40, 40), 5)
+            sy = ty + 14 + 3 * 18 + 8
+            cv2.putText(db, "STEER", (10, sy), f, 0.26, DIM, 1)
+            cx = 130
+            cv2.line(db, (60, sy - 3), (200, sy - 3), (40, 40, 40), 5)
             cv2.line(db, (cx, sy - 7), (cx, sy + 1), DIM, 1)
-            steer_x = cx + int(action[0] * 80)
+            steer_x = cx + int(action[0] * 70)
             cv2.line(db, (cx, sy - 3), (steer_x, sy - 3), WHITE, 5)
 
-            cv2.putText(db, f"STAGE {self.curriculum_stage}", (sx + 120, H - 10), f, 0.3, (200, 200, 100), 1)
+            cv2.putText(db, f"STAGE {self.curriculum_stage}", (sx, H - 8), f, 0.28, (200, 200, 100), 1)
 
-            cv2.imshow("GT Dynamic Telemetry", db)
+            cv2.imshow("GT Telemetry v3", db)
             cv2.waitKey(1)
         except Exception as e:
-            print(f"⚠️ Dash Error: {e}")
+            print(f"⚠️ Dash: {e}")
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed, options=options)
@@ -355,10 +372,10 @@ class GranTurismoEnv(gym.Env):
         self.controller.load_save_state(target_slot)
         time.sleep(1.5)
 
-        # Reset state
         self.current_step = 0
         self.stuck_frames = 0
         self.loiter_frames = 0
+        self.wrong_dir_frames = 0
         self.episode_reward = 0.0
         self.pos_buffer.clear()
         self.current_speed = 0
@@ -375,9 +392,12 @@ class GranTurismoEnv(gym.Env):
         if raw_frame is None:
             return self._get_empty_obs(), {}
 
-        obs_frame = self.vision.get_obs_frame(raw_frame)
+        line_ch, _ = self.vision.get_line_channel(raw_frame)
+        road_ch = self.vision.get_road_channel(raw_frame)
+        brake_ch = self.vision.get_brake_channel(raw_frame)
+        frame_obs = np.stack([line_ch, road_ch, brake_ch], axis=-1)
         aux = self._build_aux()
-        obs = {"frame": obs_frame, "aux": aux}
+        obs = {"frame": frame_obs, "aux": aux}
 
         print(f"🔄 Episode Started - Slot: {target_slot}, Stage: {self.curriculum_stage}")
         return obs, {}

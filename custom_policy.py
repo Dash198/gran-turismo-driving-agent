@@ -1,9 +1,9 @@
 """
-CustomFeaturesExtractor v2 — Paper-Aligned
-───────────────────────────────────────────
-CNN architecture closer to Paper 1:
-  Conv: 64→128→256→512→FC128 (vs old 32→64→64→FC256)
-Observation: 64×64×3 RGB + 8-dim aux (with frame stack)
+CustomFeaturesExtractor v3 — Hybrid
+────────────────────────────────────
+v1-size CNN (3050-friendly) with updated input dims:
+  frame: 64×64×(3×n_stack) mask channels
+  aux: 8×n_stack proprioceptive dims
 """
 
 import torch as th
@@ -14,9 +14,9 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 class CustomFeaturesExtractor(BaseFeaturesExtractor):
     """
-    Extracts features from dict observation:
-      - 'frame': (64, 64, C) CNN features — C=3 base, C=6 with n_stack=2
-      - 'aux': (N,) auxiliary vector — N=8 base, N=16 with n_stack=2
+    Dict observation extractor:
+      - 'frame': (64, 64, C) — C=3 base, C=6 with n_stack=2
+      - 'aux': (N,) — N=8 base, N=16 with n_stack=2
     """
 
     def __init__(self, observation_space: spaces.Dict):
@@ -25,22 +25,19 @@ class CustomFeaturesExtractor(BaseFeaturesExtractor):
         frame_shape = observation_space["frame"].shape
         aux_dim = observation_space["aux"].shape[0]
 
-        # After VecTransposeImage, shape is (C, H, W); before it's (H, W, C)
+        # Detect CHW vs HWC
         if frame_shape[0] < frame_shape[1]:
-            n_input_channels = frame_shape[0]  # CHW
+            n_input_channels = frame_shape[0]
         else:
-            n_input_channels = frame_shape[-1]  # HWC
+            n_input_channels = frame_shape[-1]
 
-        # CNN — Paper 1 architecture (scaled for 64×64 input)
-        # Paper 1: Conv(64,4,2) → Conv(128,4,2) → Conv(256,4,2) → Conv(512,4,2) → FC(128)
+        # CNN — v1 size (fast on 3050, proven 12+ FPS)
         self.cnn = nn.Sequential(
-            nn.Conv2d(n_input_channels, 64, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(n_input_channels, 32, kernel_size=8, stride=4, padding=0),
             nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
             nn.ReLU(),
-            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
             nn.ReLU(),
             nn.Flatten(),
         )
@@ -54,22 +51,14 @@ class CustomFeaturesExtractor(BaseFeaturesExtractor):
             cnn_output = self.cnn(sample)
             self.cnn_output_dim = cnn_output.shape[1]
 
-        # FC to compress CNN features (Paper 1: FC → 128)
-        self.cnn_fc = nn.Sequential(
-            nn.Linear(self.cnn_output_dim, 128),
-            nn.ReLU(),
-        )
-
-        # MLP for auxiliary input
+        # Aux MLP — larger than v1 to handle 8-dim proprioception
         self.aux_mlp = nn.Sequential(
             nn.Linear(aux_dim, 64),
             nn.ReLU(),
         )
 
-        # Combined features → output dim
-        # Paper 1: 128 (CNN) + 17 (proprio) → 2048×4 MLP
-        # Ours: 128 (CNN) + 64 (aux MLP) → 256 (budget-friendly)
-        combined_dim = 128 + 64
+        # Combined → 256 features
+        combined_dim = self.cnn_output_dim + 64
         self.combined = nn.Sequential(
             nn.Linear(combined_dim, 256),
             nn.ReLU(),
@@ -77,7 +66,7 @@ class CustomFeaturesExtractor(BaseFeaturesExtractor):
 
     def forward(self, observations: dict) -> th.Tensor:
         frame = observations["frame"]
-        cnn_features = self.cnn_fc(self.cnn(frame))
+        cnn_features = self.cnn(frame)
 
         aux = observations["aux"]
         aux_features = self.aux_mlp(aux)
