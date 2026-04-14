@@ -65,7 +65,7 @@ class GranTurismoEnv(gym.Env):
         # Termination thresholds (seconds)
         self.GRACE_PERIOD = 10.0
         self.STUCK_TOLERANCE = 10.0
-        self.LOITER_TOLERANCE = 15.0
+        self.LOITER_TOLERANCE = 25.0    # Was 15s, increased for OCR noise margin
         self.WRONG_DIR_TOLERANCE = 5.0    # NEW: kill if driving backward
 
     def _print_episode_stats(self, reason):
@@ -144,7 +144,7 @@ class GranTurismoEnv(gym.Env):
         if progress_delta < -0.5:  # Lap wraparound
             progress_delta = (1.0 - self.prev_progress) + current_progress
         progress_delta = max(progress_delta, -0.1)
-        r_progress = progress_delta * 500.0
+        r_progress = progress_delta * 1500.0  # Was 500 — must outpace steer penalty
         self.prev_progress = current_progress
 
         # B. Collision — proportional to speed² (Paper 2 style)
@@ -155,7 +155,7 @@ class GranTurismoEnv(gym.Env):
 
         # C. Steering change penalty (Paper 1: r_s = -|Δθ|)
         steer_delta = abs(steer - self.steer_history[-2])
-        r_steer = -steer_delta * 1.0
+        r_steer = -steer_delta * 0.3  # Was 1.0 — caused wobble feedback loop
 
         reward = r_progress + r_collision + r_steer
 
