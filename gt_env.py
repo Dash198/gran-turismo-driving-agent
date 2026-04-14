@@ -147,11 +147,9 @@ class GranTurismoEnv(gym.Env):
         r_progress = progress_delta * 1500.0  # Was 500 — must outpace steer penalty
         self.prev_progress = current_progress
 
-        # B. Collision — proportional to speed² (Paper 2 style)
+        # B. Collision — DISABLED: spark detection ROI needs recalibration.
+        # Progress already penalizes wall hits (slow down → less progress).
         r_collision = 0.0
-        if is_collision:
-            spd = self.estimated_speed
-            r_collision = -max(10.0, spd * spd * 0.01)
 
         # C. Steering change penalty (Paper 1: r_s = -|Δθ|)
         steer_delta = abs(steer - self.steer_history[-2])
