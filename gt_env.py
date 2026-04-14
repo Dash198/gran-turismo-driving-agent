@@ -64,7 +64,7 @@ class GranTurismoEnv(gym.Env):
 
         # Termination thresholds (seconds)
         self.GRACE_PERIOD = 10.0
-        self.STUCK_TOLERANCE = 10.0
+        self.STUCK_TOLERANCE = 20.0    # Was 10s, more time to recover
         self.LOITER_TOLERANCE = 25.0    # Was 15s, increased for OCR noise margin
         self.WRONG_DIR_TOLERANCE = 5.0    # NEW: kill if driving backward
 
