@@ -162,7 +162,7 @@ class GranTurismoEnv(gym.Env):
         reason = ""
         in_grace = self.current_step < int(self.GRACE_PERIOD * fps)
 
-        # OCR speed + lap check (every 30 steps)
+        # OCR speed + lap check (every 30 steps — OCR only for lap detection + display)
         if self.current_step % 30 == 0:
             self.current_speed = self.vision.get_speed(raw_frame)
             if self.vision.check_lap_change(
@@ -173,15 +173,14 @@ class GranTurismoEnv(gym.Env):
                 reason = "LAP COMPLETED"
                 self._update_curriculum(lap_completed=True)
 
-            # Loiter check (after grace)
-            ocr_speed = self.current_speed if self.current_speed is not None else 0
-            if not in_grace:
-                if ocr_speed < 5:
-                    self.loiter_frames += 30
-                else:
-                    self.loiter_frames = 0
+        # Loiter check — displacement-based (not OCR, which is unreliable)
+        if not in_grace:
+            if self.estimated_speed < 0.5:  # Nearly stationary
+                self.loiter_frames += 1
             else:
                 self.loiter_frames = 0
+        else:
+            self.loiter_frames = 0
 
         if not terminated:
             # Stuck: low displacement

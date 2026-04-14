@@ -155,8 +155,12 @@ class VisionInterface:
         speed_roi = frame[y:y+h, x:x+w]
         gray = cv2.cvtColor(speed_roi, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
-        config = "--psm 7 -c tessedit_char_whitelist=0123456789"
-        text = pytesseract.image_to_string(thresh, config=config).strip()
+        # Upscale 3× — Tesseract struggles with tiny images
+        big = cv2.resize(thresh, (w * 3, h * 3), interpolation=cv2.INTER_NEAREST)
+        # Add white border padding for Tesseract context
+        big = cv2.copyMakeBorder(big, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=0)
+        config = "--psm 8 -c tessedit_char_whitelist=0123456789"
+        text = pytesseract.image_to_string(big, config=config).strip()
         try:
             return int(text)
         except ValueError:
