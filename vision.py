@@ -41,6 +41,12 @@ class VisionInterface:
 
         # Reusable morphology kernels
         self._k3 = np.ones((3, 3), np.uint8)
+        self._k5 = np.ones((5, 5), np.uint8)
+
+        # Game content bounds (capture card black bar crop)
+        # Detected: game occupies x=0-349, y=120-383 in 640×480 frame
+        self.GAME_X0, self.GAME_X1 = 0, 350
+        self.GAME_Y0, self.GAME_Y1 = 120, 384
 
         # Camera setup
         self.cap = cv2.VideoCapture(camera_index)
@@ -67,41 +73,38 @@ class VisionInterface:
             return None
         return cv2.resize(frame, (640, 480))
 
+    def _get_game_content(self, frame):
+        """Crop to actual game area (remove capture card black bars)."""
+        return frame[self.GAME_Y0:self.GAME_Y1, self.GAME_X0:self.GAME_X1]
+
     # ═══════════════════════════════════════
     # OBSERVATION CHANNELS (all output 64×64)
     # ═══════════════════════════════════════
 
     def get_line_channel(self, frame):
         """
-        Returns (64×64 uint8 distance-gradient, center_pos float or None).
-        Single-pass: HSV → blue/red mask → distance transform → gradient.
+        Returns (64×64 uint8 dilated mask, center_pos float or None).
+        Uses cropped game area → HSV → blue/red mask → dilate.
         """
-        h, w = frame.shape[:2]
-        roi = frame[int(h * 0.3):int(h * 0.6), :]
-        small = cv2.resize(roi, (160, 60))
+        game = self._get_game_content(frame)
+        h, w = game.shape[:2]
+        roi = game[int(h * 0.15):int(h * 0.55), :]
+        small = cv2.resize(roi, (160, 80))
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
 
         mask_blue = cv2.inRange(hsv, self.lower_blue, self.upper_blue)
         mask_r1 = cv2.inRange(hsv, self.lower_red1, self.upper_red1)
         mask_r2 = cv2.inRange(hsv, self.lower_red2, self.upper_red2)
         mask = cv2.bitwise_or(mask_blue, cv2.bitwise_or(mask_r1, mask_r2))
-        mask = cv2.dilate(mask, self._k3, iterations=1)
+        mask = cv2.dilate(mask, self._k5, iterations=2)  # Thick dilation for clear signal
 
         # Resize to 64×64
-        mask_64 = cv2.resize(mask, (64, 64))
+        channel = cv2.resize(mask, (64, 64))
 
-        # Distance transform gradient (bright = close to line)
-        if mask_64.max() == 0:
+        if channel.max() == 0:
             return np.zeros((64, 64), dtype=np.uint8), None
 
-        dist = cv2.distanceTransform(255 - mask_64, cv2.DIST_L2, 5)
-        d_max = dist.max()
-        if d_max > 0:
-            channel = np.clip((1.0 - dist / d_max) * 255, 0, 255).astype(np.uint8)
-        else:
-            channel = (mask_64 > 0).astype(np.uint8) * 255
-
-        # Center position from original mask
+        # Center position from processing mask
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         center_pos = None
         if contours:
@@ -110,15 +113,16 @@ class VisionInterface:
                 M = cv2.moments(largest)
                 if M["m00"] != 0:
                     cx = int(M["m10"] / M["m00"])
-                    center_pos = (cx - 42) / 80.0
+                    center_pos = (cx - 80) / 80.0  # Centered for 160-wide
 
         return channel, center_pos
 
     def get_road_channel(self, frame):
         """Returns 64×64 binary mask of drivable surface."""
-        h, w = frame.shape[:2]
-        roi = frame[int(h * 0.3):int(h * 0.6), :]
-        small = cv2.resize(roi, (160, 60))
+        game = self._get_game_content(frame)
+        h, w = game.shape[:2]
+        roi = game[int(h * 0.15):int(h * 0.55), :]
+        small = cv2.resize(roi, (160, 80))
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         road_mask = cv2.inRange(hsv, self.lower_road, self.upper_road)
         road_mask = cv2.morphologyEx(road_mask, cv2.MORPH_CLOSE, self._k3)
@@ -126,11 +130,12 @@ class VisionInterface:
 
     def get_brake_channel(self, frame):
         """Returns 64×64 brake zone overlay (near-field red detection)."""
-        h, w = frame.shape[:2]
-        roi = frame[int(h * 0.5):int(h * 0.7), :]
+        game = self._get_game_content(frame)
+        h, w = game.shape[:2]
+        roi = game[int(h * 0.45):int(h * 0.75), :]
         if roi.size == 0:
             return np.zeros((64, 64), dtype=np.uint8)
-        small = cv2.resize(roi, (160, 60))
+        small = cv2.resize(roi, (160, 80))
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         mask1 = cv2.inRange(hsv, np.array([0, 140, 100]), np.array([10, 255, 255]))
         mask2 = cv2.inRange(hsv, np.array([170, 140, 100]), np.array([180, 255, 255]))
