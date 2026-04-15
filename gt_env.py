@@ -65,8 +65,8 @@ class GranTurismoEnv(gym.Env):
 
         # Termination thresholds (seconds)
         self.GRACE_PERIOD = 10.0
-        self.STUCK_TOLERANCE = 8.0     # Tightened from 20s
-        self.LOITER_TOLERANCE = 10.0   # Tightened from 25s
+        self.STUCK_TOLERANCE = 12.0    # Give agent time to recover
+        self.LOITER_TOLERANCE = 15.0   # Only kill true standstills
         self.WRONG_DIR_TOLERANCE = 5.0
         self.PROGRESS_GATE_TIME = 30.0  # Must make 3% progress within this window after grace
         self.PROGRESS_GATE_MIN = 0.03   # Minimum progress delta required
@@ -178,7 +178,7 @@ class GranTurismoEnv(gym.Env):
 
         # Loiter check — displacement-based
         if not in_grace:
-            if self.estimated_speed < 2.0:  # Was 0.5 — harder to fake
+            if self.estimated_speed < 0.8:  # Only true standstill (rolling start)
                 self.loiter_frames += 1
             else:
                 self.loiter_frames = 0

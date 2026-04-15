@@ -80,7 +80,7 @@ def main():
             buffer_size=100_000,         # 2× v1 — retains experiences longer
             learning_starts=5000,
             batch_size=256,
-            learning_rate=3e-5,          # Paper-aligned (was 3e-4 in v1)
+            learning_rate=1e-4,          # Faster than papers' 2.5e-5 but needed for our smaller setup
             train_freq=1,
             gradient_steps=1,
             gamma=0.99,
