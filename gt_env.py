@@ -33,7 +33,7 @@ class GranTurismoEnv(gym.Env):
         )
 
         # Episode state
-        self.max_steps = 15000
+        self.max_steps = 5000  # ~3min at 27 FPS (lap takes ~2min)
         self.current_step = 0
         self.stuck_frames = 0
         self.loiter_frames = 0
@@ -42,6 +42,7 @@ class GranTurismoEnv(gym.Env):
         self.current_speed = 0
         self.prev_progress = 0.0
         self.estimated_speed = 0.0
+        self.progress_at_gate = None  # Snapshot for progress gate check
 
         # Buffers
         self.pos_buffer = deque(maxlen=100)
@@ -64,9 +65,11 @@ class GranTurismoEnv(gym.Env):
 
         # Termination thresholds (seconds)
         self.GRACE_PERIOD = 10.0
-        self.STUCK_TOLERANCE = 20.0    # Was 10s, more time to recover
-        self.LOITER_TOLERANCE = 25.0    # Was 15s, increased for OCR noise margin
-        self.WRONG_DIR_TOLERANCE = 5.0    # NEW: kill if driving backward
+        self.STUCK_TOLERANCE = 8.0     # Tightened from 20s
+        self.LOITER_TOLERANCE = 10.0   # Tightened from 25s
+        self.WRONG_DIR_TOLERANCE = 5.0
+        self.PROGRESS_GATE_TIME = 30.0  # Must make 3% progress within this window after grace
+        self.PROGRESS_GATE_MIN = 0.03   # Minimum progress delta required
 
     def _print_episode_stats(self, reason):
         print("\n" + "=" * 45)
@@ -173,14 +176,20 @@ class GranTurismoEnv(gym.Env):
                 reason = "LAP COMPLETED"
                 self._update_curriculum(lap_completed=True)
 
-        # Loiter check — displacement-based (not OCR, which is unreliable)
+        # Loiter check — displacement-based
         if not in_grace:
-            if self.estimated_speed < 0.5:  # Nearly stationary
+            if self.estimated_speed < 2.0:  # Was 0.5 — harder to fake
                 self.loiter_frames += 1
             else:
                 self.loiter_frames = 0
         else:
             self.loiter_frames = 0
+
+        # Progress gate — snapshot progress at end of grace, check later
+        gate_step = int((self.GRACE_PERIOD + self.PROGRESS_GATE_TIME) * fps)
+        grace_end_step = int(self.GRACE_PERIOD * fps)
+        if self.current_step == grace_end_step:
+            self.progress_at_gate = current_progress
 
         if not terminated:
             # Stuck: low displacement
@@ -208,6 +217,17 @@ class GranTurismoEnv(gym.Env):
                     reason = "WRONG DIRECTION"
             else:
                 self.wrong_dir_frames = 0
+
+            # Progress gate: must have made 3% progress by grace + 30s
+            if (self.current_step == gate_step
+                    and self.progress_at_gate is not None):
+                progress_made = current_progress - self.progress_at_gate
+                if progress_made < -0.5:  # Wraparound
+                    progress_made += 1.0
+                if progress_made < self.PROGRESS_GATE_MIN:
+                    reward += -500.0
+                    terminated = True
+                    reason = f"NO PROGRESS ({progress_made:.3f} < {self.PROGRESS_GATE_MIN})"
 
             # Max steps
             if self.current_step >= self.max_steps:
@@ -378,6 +398,7 @@ class GranTurismoEnv(gym.Env):
         self.current_speed = 0
         self.prev_progress = 0.0
         self.estimated_speed = 0.0
+        self.progress_at_gate = None
         self.last_step_time = time.time()
         self.progress_buffer.clear()
         self.steer_history = deque([0.0, 0.0, 0.0], maxlen=3)
