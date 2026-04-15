@@ -47,6 +47,7 @@ class GranTurismoEnv(gym.Env):
         # Buffers
         self.pos_buffer = deque(maxlen=100)
         self.progress_buffer = deque(maxlen=5)
+        self.progress_reward_buffer = deque(maxlen=10)  # Smooth progress over 10 frames
 
         # Action history (Paper 1: 3-step steering + gas history)
         self.steer_history = deque([0.0, 0.0, 0.0], maxlen=3)
@@ -142,12 +143,13 @@ class GranTurismoEnv(gym.Env):
         # 6. REWARD — progress-dominated
         # ═══════════════════════════════════
 
-        # A. Progress — primary signal
+        # A. Progress — primary signal (smoothed over 10 frames)
         progress_delta = current_progress - self.prev_progress
         if progress_delta < -0.5:  # Lap wraparound
             progress_delta = (1.0 - self.prev_progress) + current_progress
         progress_delta = max(progress_delta, -0.1)
-        r_progress = progress_delta * 1500.0  # Was 500 — must outpace steer penalty
+        self.progress_reward_buffer.append(progress_delta * 1500.0)
+        r_progress = float(np.mean(self.progress_reward_buffer))
         self.prev_progress = current_progress
 
         # B. Collision — DISABLED: spark detection ROI needs recalibration.
@@ -401,6 +403,7 @@ class GranTurismoEnv(gym.Env):
         self.progress_at_gate = None
         self.last_step_time = time.time()
         self.progress_buffer.clear()
+        self.progress_reward_buffer.clear()
         self.steer_history = deque([0.0, 0.0, 0.0], maxlen=3)
         self.gas_history = deque([0.0, 0.0, 0.0], maxlen=3)
 
