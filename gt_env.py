@@ -69,7 +69,7 @@ class GranTurismoEnv(gym.Env):
         self.STUCK_TOLERANCE = 12.0    # Give agent time to recover
         self.LOITER_TOLERANCE = 15.0   # Only kill true standstills
         self.WRONG_DIR_TOLERANCE = 5.0
-        self.PROGRESS_GATE_TIME = 30.0  # Must make 3% progress within this window after grace
+        self.PROGRESS_GATE_TIME = 15.0  # Was 30s — agent was dying net-positive before gate fired
         self.PROGRESS_GATE_MIN = 0.03   # Minimum progress delta required
 
     def _print_episode_stats(self, reason):
@@ -143,13 +143,19 @@ class GranTurismoEnv(gym.Env):
         # 6. REWARD — progress-dominated
         # ═══════════════════════════════════
 
-        # A. Progress — primary signal (smoothed over 10 frames)
+        # A. Progress — primary signal (smoothed, gated on movement)
         progress_delta = current_progress - self.prev_progress
         if progress_delta < -0.5:  # Lap wraparound
             progress_delta = (1.0 - self.prev_progress) + current_progress
         progress_delta = max(progress_delta, -0.1)
         self.progress_reward_buffer.append(progress_delta * 1500.0)
-        r_progress = float(np.mean(self.progress_reward_buffer))
+
+        # GATE: only reward progress if car is actually moving
+        # This blocks the minimap jitter exploit (+0.63/step while stationary)
+        if displacement > 2.0:
+            r_progress = float(np.mean(self.progress_reward_buffer))
+        else:
+            r_progress = 0.0
         self.prev_progress = current_progress
 
         # B. Collision — DISABLED: spark detection ROI needs recalibration.
