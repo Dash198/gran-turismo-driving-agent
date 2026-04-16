@@ -151,11 +151,12 @@ class GranTurismoEnv(gym.Env):
         self.progress_reward_buffer.append(progress_delta * 1500.0)
 
         # GATE: only reward progress if car is actually moving
-        # This blocks the minimap jitter exploit (+0.63/step while stationary)
-        if displacement > 2.0:
+        # Threshold 5.0 filters minimap jitter (±1-2px → endpoint drift up to ~3px)
+        if displacement > 5.0:
             r_progress = float(np.mean(self.progress_reward_buffer))
         else:
-            r_progress = 0.0
+            r_progress = -0.05  # Active penalty: standing still is worse than zero
+            self.progress_reward_buffer.clear()  # Flush so old positives can't leak
         self.prev_progress = current_progress
 
         # B. Collision — DISABLED: spark detection ROI needs recalibration.
