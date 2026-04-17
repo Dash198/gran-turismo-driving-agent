@@ -159,15 +159,16 @@ class GranTurismoEnv(gym.Env):
             self.progress_reward_buffer.clear()  # Flush so old positives can't leak
         self.prev_progress = current_progress
 
-        # B. Collision — DISABLED: spark detection ROI needs recalibration.
-        # Progress already penalizes wall hits (slow down → less progress).
-        r_collision = 0.0
+        # B. Speed — directly reward locomotion (independent of minimap progress)
+        # Jitter floor at 1.5 filters stationary noise, caps at 0.5/step
+        r_speed = max(0.0, (self.estimated_speed - 1.5)) * 0.1
+        r_speed = min(r_speed, 0.5)
 
         # C. Steering change penalty (Paper 1: r_s = -|Δθ|)
         steer_delta = abs(steer - self.steer_history[-2])
-        r_steer = -steer_delta * 0.3  # Was 1.0 — caused wobble feedback loop
+        r_steer = -steer_delta * 0.3
 
-        reward = r_progress + r_collision + r_steer
+        reward = r_progress + r_speed + r_steer
 
         # 7. TERMINATIONS
         terminated = False
@@ -258,7 +259,7 @@ class GranTurismoEnv(gym.Env):
                 fps=fps,
                 crash=is_collision,
                 r_prog=r_progress,
-                r_coll=r_collision,
+                r_speed=r_speed,
                 r_steer=r_steer,
                 displacement=displacement,
                 s_frames=self.stuck_frames,
@@ -296,7 +297,7 @@ class GranTurismoEnv(gym.Env):
 
     def _render_dashboard(
         self, obs_frame, l_pos, rew, action, fps, crash,
-        r_prog, r_coll, r_steer, displacement,
+        r_prog, r_speed, r_steer, displacement,
         s_frames, s_max, l_frames, l_max, w_frames, w_max, has_line,
     ):
         try:
@@ -351,7 +352,7 @@ class GranTurismoEnv(gym.Env):
             cv2.putText(db, "REWARDS", (10, ry), f, 0.33, CYAN, 1)
             def _rc(v):
                 return (0, 255, 0) if v > 0.01 else (0, 0, 255) if v < -0.01 else DIM
-            for i, (name, val) in enumerate([("Progress", r_prog), ("Collision", r_coll), ("Steer Δ", r_steer)]):
+            for i, (name, val) in enumerate([("Progress", r_prog), ("Speed", r_speed), ("Steer Δ", r_steer)]):
                 y = ry + 15 + i * 16
                 cv2.putText(db, f"{name}:", (10, y), f, 0.28, DIM, 1)
                 cv2.putText(db, f"{val:+.3f}", (85, y), f, 0.28, _rc(val), 1)

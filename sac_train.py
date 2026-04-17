@@ -84,7 +84,7 @@ def main():
             train_freq=1,
             gradient_steps=1,
             gamma=0.99,
-            ent_coef=0.01,              # Fixed (was auto_0.1 in v1)
+            ent_coef="auto",            # Auto-tune: increases exploration when agent gets stuck
             policy_kwargs=policy_kwargs,
         )
 
