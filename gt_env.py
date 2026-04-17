@@ -143,20 +143,6 @@ class GranTurismoEnv(gym.Env):
             instant_disp = 0.0
         self.estimated_speed = instant_disp / dt
 
-        # 5b. FRAME-DIFF MOTION DETECTION
-        game_area = self.vision._get_game_content(raw_frame)
-        h_g, w_g = game_area.shape[:2]
-        road_roi = game_area[int(h_g * 0.2):int(h_g * 0.6), :]  # Road area only
-        motion_frame = cv2.cvtColor(cv2.resize(road_roi, (32, 24)), cv2.COLOR_BGR2GRAY)
-        if self._prev_motion_frame is not None:
-            frame_diff = np.mean(np.abs(
-                motion_frame.astype(float) - self._prev_motion_frame.astype(float)
-            ))
-            self._motion_buffer.append(frame_diff)
-        self._prev_motion_frame = motion_frame
-        avg_motion = float(np.mean(self._motion_buffer)) if self._motion_buffer else 10.0
-        car_is_moving = avg_motion > 2.0  # Road scrolling = car moving
-
         # ═══════════════════════════════════
         # 6. REWARD — progress-dominated
         # ═══════════════════════════════════
@@ -171,8 +157,9 @@ class GranTurismoEnv(gym.Env):
         r_progress = float(np.mean(self.progress_reward_buffer))
         self.prev_progress = current_progress
 
-        # B. Time penalty — standing still is inherently bad
-        r_time = -0.1
+        # B. Time penalty — makes farming mathematically unprofitable
+        # Standing still: -0.3 × 5000 = -1500. Driving: +0.21 × 5000 = +1050. Gap = 2550.
+        r_time = -0.3
 
         # C. Steering change penalty
         steer_delta = abs(steer - self.steer_history[-2])
@@ -196,9 +183,9 @@ class GranTurismoEnv(gym.Env):
                 reason = "LAP COMPLETED"
                 self._update_curriculum(lap_completed=True)
 
-        # Stuck/Loiter — frame-diff based (immune to minimap jitter)
+        # Stuck/Loiter — displacement safety net (imperfect, but reward math does the real work)
         if not in_grace:
-            if not car_is_moving:
+            if displacement < 8.0:
                 self.stuck_frames += 1
                 self.loiter_frames += 1
             else:
@@ -252,7 +239,7 @@ class GranTurismoEnv(gym.Env):
                 r_prog=r_progress,
                 r_time=r_time,
                 r_steer=r_steer,
-                avg_motion=avg_motion,
+                displacement=displacement,
                 s_frames=self.stuck_frames,
                 s_max=int(self.STUCK_TOLERANCE * 25),
                 l_frames=self.loiter_frames,
@@ -288,7 +275,7 @@ class GranTurismoEnv(gym.Env):
 
     def _render_dashboard(
         self, obs_frame, l_pos, rew, action, fps, crash,
-        r_prog, r_time, r_steer, avg_motion,
+        r_prog, r_time, r_steer, displacement,
         s_frames, s_max, l_frames, l_max, w_frames, w_max, has_line,
     ):
         try:
@@ -322,8 +309,7 @@ class GranTurismoEnv(gym.Env):
             ocr_spd = self.current_speed if self.current_speed else 0
             cv2.putText(db, f"SPD: {ocr_spd} km/h", (sx, 48), f, 0.33, WHITE, 1)
             cv2.putText(db, f"STEP: {self.current_step}", (sx, 64), f, 0.3, DIM, 1)
-            mot_col = (0, 255, 0) if avg_motion > 2.0 else (0, 0, 255)
-            cv2.putText(db, f"MOT: {avg_motion:.1f}", (sx, 80), f, 0.3, mot_col, 1)
+            cv2.putText(db, f"DISP: {displacement:.1f}", (sx, 80), f, 0.3, DIM, 1)
 
             r_col = (0, 255, 0) if rew >= 0 else (0, 0, 255)
             cv2.putText(db, f"{rew:+.1f}", (sx, 110), f, 0.7, r_col, 2)
