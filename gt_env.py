@@ -45,7 +45,7 @@ class GranTurismoEnv(gym.Env):
         self.progress_at_gate = None  # Snapshot for progress gate check
 
         # Buffers
-        self.pos_buffer = deque(maxlen=100)
+        self.pos_buffer = deque(maxlen=30)  # ~1.5s at 20FPS (was 100 = 5s jitter drift)
         self.progress_buffer = deque(maxlen=5)
         self.progress_reward_buffer = deque(maxlen=10)  # Smooth progress over 10 frames
 
@@ -151,24 +151,19 @@ class GranTurismoEnv(gym.Env):
         self.progress_reward_buffer.append(progress_delta * 1500.0)
 
         # GATE: only reward progress if car is actually moving
-        # Threshold 5.0 filters minimap jitter (±1-2px → endpoint drift up to ~3px)
-        if displacement > 5.0:
+        # 30-frame buffer at 20 FPS = 1.5s window. Random walk jitter ~sqrt(30) ≈ 5.5px max
+        if displacement > 8.0:
             r_progress = float(np.mean(self.progress_reward_buffer))
         else:
-            r_progress = -0.05  # Active penalty: standing still is worse than zero
-            self.progress_reward_buffer.clear()  # Flush so old positives can't leak
+            r_progress = -0.2  # Heavy idle penalty: standing still is clearly bad
+            self.progress_reward_buffer.clear()
         self.prev_progress = current_progress
 
-        # B. Speed — directly reward locomotion (independent of minimap progress)
-        # Jitter floor at 1.5 filters stationary noise, caps at 0.5/step
-        r_speed = max(0.0, (self.estimated_speed - 1.5)) * 0.1
-        r_speed = min(r_speed, 0.5)
-
-        # C. Steering change penalty (Paper 1: r_s = -|Δθ|)
+        # B. Steering change penalty
         steer_delta = abs(steer - self.steer_history[-2])
         r_steer = -steer_delta * 0.3
 
-        reward = r_progress + r_speed + r_steer
+        reward = r_progress + r_steer
 
         # 7. TERMINATIONS
         terminated = False
@@ -259,7 +254,6 @@ class GranTurismoEnv(gym.Env):
                 fps=fps,
                 crash=is_collision,
                 r_prog=r_progress,
-                r_speed=r_speed,
                 r_steer=r_steer,
                 displacement=displacement,
                 s_frames=self.stuck_frames,
@@ -297,7 +291,7 @@ class GranTurismoEnv(gym.Env):
 
     def _render_dashboard(
         self, obs_frame, l_pos, rew, action, fps, crash,
-        r_prog, r_speed, r_steer, displacement,
+        r_prog, r_steer, displacement,
         s_frames, s_max, l_frames, l_max, w_frames, w_max, has_line,
     ):
         try:
@@ -352,7 +346,7 @@ class GranTurismoEnv(gym.Env):
             cv2.putText(db, "REWARDS", (10, ry), f, 0.33, CYAN, 1)
             def _rc(v):
                 return (0, 255, 0) if v > 0.01 else (0, 0, 255) if v < -0.01 else DIM
-            for i, (name, val) in enumerate([("Progress", r_prog), ("Speed", r_speed), ("Steer Δ", r_steer)]):
+            for i, (name, val) in enumerate([("Progress", r_prog), ("Steer Δ", r_steer)]):
                 y = ry + 15 + i * 16
                 cv2.putText(db, f"{name}:", (10, y), f, 0.28, DIM, 1)
                 cv2.putText(db, f"{val:+.3f}", (85, y), f, 0.28, _rc(val), 1)
