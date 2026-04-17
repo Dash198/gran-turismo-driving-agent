@@ -45,9 +45,13 @@ class GranTurismoEnv(gym.Env):
         self.progress_at_gate = None  # Snapshot for progress gate check
 
         # Buffers
-        self.pos_buffer = deque(maxlen=30)  # ~1.5s at 20FPS (was 100 = 5s jitter drift)
+        self.pos_buffer = deque(maxlen=30)
         self.progress_buffer = deque(maxlen=5)
-        self.progress_reward_buffer = deque(maxlen=10)  # Smooth progress over 10 frames
+        self.progress_reward_buffer = deque(maxlen=20)  # Smooth over 20 frames (zero-mean jitter)
+
+        # Frame-diff motion detection (immune to minimap jitter)
+        self._prev_motion_frame = None
+        self._motion_buffer = deque(maxlen=15)  # ~0.75s at 20FPS
 
         # Action history (Paper 1: 3-step steering + gas history)
         self.steer_history = deque([0.0, 0.0, 0.0], maxlen=3)
@@ -139,31 +143,42 @@ class GranTurismoEnv(gym.Env):
             instant_disp = 0.0
         self.estimated_speed = instant_disp / dt
 
+        # 5b. FRAME-DIFF MOTION DETECTION
+        game_area = self.vision._get_game_content(raw_frame)
+        h_g, w_g = game_area.shape[:2]
+        road_roi = game_area[int(h_g * 0.2):int(h_g * 0.6), :]  # Road area only
+        motion_frame = cv2.cvtColor(cv2.resize(road_roi, (32, 24)), cv2.COLOR_BGR2GRAY)
+        if self._prev_motion_frame is not None:
+            frame_diff = np.mean(np.abs(
+                motion_frame.astype(float) - self._prev_motion_frame.astype(float)
+            ))
+            self._motion_buffer.append(frame_diff)
+        self._prev_motion_frame = motion_frame
+        avg_motion = float(np.mean(self._motion_buffer)) if self._motion_buffer else 10.0
+        car_is_moving = avg_motion > 2.0  # Road scrolling = car moving
+
         # ═══════════════════════════════════
         # 6. REWARD — progress-dominated
         # ═══════════════════════════════════
 
-        # A. Progress — primary signal (smoothed, gated on movement)
+        # A. Progress — primary signal (smoothed, NO displacement gate)
+        # Jitter is zero-mean over 20 frames — cancels out naturally
         progress_delta = current_progress - self.prev_progress
         if progress_delta < -0.5:  # Lap wraparound
             progress_delta = (1.0 - self.prev_progress) + current_progress
         progress_delta = max(progress_delta, -0.1)
         self.progress_reward_buffer.append(progress_delta * 1500.0)
-
-        # GATE: only reward progress if car is actually moving
-        # 30-frame buffer at 20 FPS = 1.5s window. Random walk jitter ~sqrt(30) ≈ 5.5px max
-        if displacement > 8.0:
-            r_progress = float(np.mean(self.progress_reward_buffer))
-        else:
-            r_progress = -0.2  # Heavy idle penalty: standing still is clearly bad
-            self.progress_reward_buffer.clear()
+        r_progress = float(np.mean(self.progress_reward_buffer))
         self.prev_progress = current_progress
 
-        # B. Steering change penalty
+        # B. Time penalty — standing still is inherently bad
+        r_time = -0.1
+
+        # C. Steering change penalty
         steer_delta = abs(steer - self.steer_history[-2])
         r_steer = -steer_delta * 0.3
 
-        reward = r_progress + r_steer
+        reward = r_progress + r_time + r_steer
 
         # 7. TERMINATIONS
         terminated = False
@@ -181,33 +196,24 @@ class GranTurismoEnv(gym.Env):
                 reason = "LAP COMPLETED"
                 self._update_curriculum(lap_completed=True)
 
-        # Loiter check — displacement-based (same threshold as reward gate)
+        # Stuck/Loiter — frame-diff based (immune to minimap jitter)
         if not in_grace:
-            if displacement < 8.0:  # Match reward gate — jitter gives ~3-5px
+            if not car_is_moving:
+                self.stuck_frames += 1
                 self.loiter_frames += 1
             else:
+                self.stuck_frames = 0
                 self.loiter_frames = 0
         else:
+            self.stuck_frames = 0
             self.loiter_frames = 0
 
-        # Progress gate — use fixed step counts (FPS fluctuation broke == check)
-        grace_steps = 250     # ~10s at 25 FPS
-        gate_check_step = 625  # ~25s at 25 FPS (grace + 15s)
-        if self.current_step == grace_steps:
-            self.progress_at_gate = current_progress
-
         if not terminated:
-            # Stuck: displacement below jitter ceiling
-            if displacement < 8.0 and not in_grace:
-                self.stuck_frames += 1
-                if self.stuck_frames > (self.STUCK_TOLERANCE * 25):  # Fixed FPS ref
-                    reward += -500.0
-                    terminated = True
-                    reason = "STUCK"
-            else:
-                self.stuck_frames = 0
+            if self.stuck_frames > (self.STUCK_TOLERANCE * 25):
+                reward += -500.0
+                terminated = True
+                reason = "STUCK"
 
-            # Loiter: sustained low displacement
             if self.loiter_frames > (self.LOITER_TOLERANCE * 25):
                 reward += -500.0
                 terminated = True
@@ -223,18 +229,6 @@ class GranTurismoEnv(gym.Env):
             else:
                 self.wrong_dir_frames = 0
 
-            # Progress gate: must have made 3% progress by gate_check_step
-            if (self.current_step >= gate_check_step
-                    and self.progress_at_gate is not None
-                    and not getattr(self, '_gate_fired', False)):
-                self._gate_fired = True
-                progress_made = current_progress - self.progress_at_gate
-                if progress_made < -0.5:  # Wraparound
-                    progress_made += 1.0
-                if progress_made < self.PROGRESS_GATE_MIN:
-                    reward += -500.0
-                    terminated = True
-                    reason = f"NO PROGRESS ({progress_made:.3f} < {self.PROGRESS_GATE_MIN})"
 
             # Max steps
             if self.current_step >= self.max_steps:
@@ -256,14 +250,15 @@ class GranTurismoEnv(gym.Env):
                 fps=fps,
                 crash=is_collision,
                 r_prog=r_progress,
+                r_time=r_time,
                 r_steer=r_steer,
-                displacement=displacement,
+                avg_motion=avg_motion,
                 s_frames=self.stuck_frames,
-                s_max=int(self.STUCK_TOLERANCE * fps),
+                s_max=int(self.STUCK_TOLERANCE * 25),
                 l_frames=self.loiter_frames,
-                l_max=int(self.LOITER_TOLERANCE * fps),
+                l_max=int(self.LOITER_TOLERANCE * 25),
                 w_frames=self.wrong_dir_frames,
-                w_max=int(self.WRONG_DIR_TOLERANCE * fps),
+                w_max=int(self.WRONG_DIR_TOLERANCE * 25),
                 has_line=(line_pos is not None),
             )
 
@@ -293,7 +288,7 @@ class GranTurismoEnv(gym.Env):
 
     def _render_dashboard(
         self, obs_frame, l_pos, rew, action, fps, crash,
-        r_prog, r_steer, displacement,
+        r_prog, r_time, r_steer, avg_motion,
         s_frames, s_max, l_frames, l_max, w_frames, w_max, has_line,
     ):
         try:
@@ -327,7 +322,8 @@ class GranTurismoEnv(gym.Env):
             ocr_spd = self.current_speed if self.current_speed else 0
             cv2.putText(db, f"SPD: {ocr_spd} km/h", (sx, 48), f, 0.33, WHITE, 1)
             cv2.putText(db, f"STEP: {self.current_step}", (sx, 64), f, 0.3, DIM, 1)
-            cv2.putText(db, f"DISP: {displacement:.1f}", (sx, 80), f, 0.3, DIM, 1)
+            mot_col = (0, 255, 0) if avg_motion > 2.0 else (0, 0, 255)
+            cv2.putText(db, f"MOT: {avg_motion:.1f}", (sx, 80), f, 0.3, mot_col, 1)
 
             r_col = (0, 255, 0) if rew >= 0 else (0, 0, 255)
             cv2.putText(db, f"{rew:+.1f}", (sx, 110), f, 0.7, r_col, 2)
@@ -348,7 +344,7 @@ class GranTurismoEnv(gym.Env):
             cv2.putText(db, "REWARDS", (10, ry), f, 0.33, CYAN, 1)
             def _rc(v):
                 return (0, 255, 0) if v > 0.01 else (0, 0, 255) if v < -0.01 else DIM
-            for i, (name, val) in enumerate([("Progress", r_prog), ("Steer Δ", r_steer)]):
+            for i, (name, val) in enumerate([("Progress", r_prog), ("Time", r_time), ("Steer Δ", r_steer)]):
                 y = ry + 15 + i * 16
                 cv2.putText(db, f"{name}:", (10, y), f, 0.28, DIM, 1)
                 cv2.putText(db, f"{val:+.3f}", (85, y), f, 0.28, _rc(val), 1)
@@ -406,6 +402,8 @@ class GranTurismoEnv(gym.Env):
         self.prev_progress = 0.0
         self.estimated_speed = 0.0
         self.progress_at_gate = None
+        self._prev_motion_frame = None
+        self._motion_buffer.clear()
         self.last_step_time = time.time()
         self.progress_buffer.clear()
         self.progress_reward_buffer.clear()
