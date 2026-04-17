@@ -181,34 +181,34 @@ class GranTurismoEnv(gym.Env):
                 reason = "LAP COMPLETED"
                 self._update_curriculum(lap_completed=True)
 
-        # Loiter check — displacement-based
+        # Loiter check — displacement-based (same threshold as reward gate)
         if not in_grace:
-            if self.estimated_speed < 0.8:  # Only true standstill (rolling start)
+            if displacement < 8.0:  # Match reward gate — jitter gives ~3-5px
                 self.loiter_frames += 1
             else:
                 self.loiter_frames = 0
         else:
             self.loiter_frames = 0
 
-        # Progress gate — snapshot progress at end of grace, check later
-        gate_step = int((self.GRACE_PERIOD + self.PROGRESS_GATE_TIME) * fps)
-        grace_end_step = int(self.GRACE_PERIOD * fps)
-        if self.current_step == grace_end_step:
+        # Progress gate — use fixed step counts (FPS fluctuation broke == check)
+        grace_steps = 250     # ~10s at 25 FPS
+        gate_check_step = 625  # ~25s at 25 FPS (grace + 15s)
+        if self.current_step == grace_steps:
             self.progress_at_gate = current_progress
 
         if not terminated:
-            # Stuck: low displacement
-            if displacement < 1.0 and not in_grace:
+            # Stuck: displacement below jitter ceiling
+            if displacement < 8.0 and not in_grace:
                 self.stuck_frames += 1
-                if self.stuck_frames > (self.STUCK_TOLERANCE * fps):
+                if self.stuck_frames > (self.STUCK_TOLERANCE * 25):  # Fixed FPS ref
                     reward += -500.0
                     terminated = True
                     reason = "STUCK"
             else:
                 self.stuck_frames = 0
 
-            # Loiter: OCR says not moving
-            if self.loiter_frames > (self.LOITER_TOLERANCE * fps):
+            # Loiter: sustained low displacement
+            if self.loiter_frames > (self.LOITER_TOLERANCE * 25):
                 reward += -500.0
                 terminated = True
                 reason = "LOITERING"
@@ -216,16 +216,18 @@ class GranTurismoEnv(gym.Env):
             # Wrong direction: negative progress for too long
             if progress_delta < -0.001 and not in_grace:
                 self.wrong_dir_frames += 1
-                if self.wrong_dir_frames > (self.WRONG_DIR_TOLERANCE * fps):
+                if self.wrong_dir_frames > (self.WRONG_DIR_TOLERANCE * 25):
                     reward += -300.0
                     terminated = True
                     reason = "WRONG DIRECTION"
             else:
                 self.wrong_dir_frames = 0
 
-            # Progress gate: must have made 3% progress by grace + 30s
-            if (self.current_step == gate_step
-                    and self.progress_at_gate is not None):
+            # Progress gate: must have made 3% progress by gate_check_step
+            if (self.current_step >= gate_check_step
+                    and self.progress_at_gate is not None
+                    and not getattr(self, '_gate_fired', False)):
+                self._gate_fired = True
                 progress_made = current_progress - self.progress_at_gate
                 if progress_made < -0.5:  # Wraparound
                     progress_made += 1.0
@@ -398,6 +400,7 @@ class GranTurismoEnv(gym.Env):
         self.loiter_frames = 0
         self.wrong_dir_frames = 0
         self.episode_reward = 0.0
+        self._gate_fired = False
         self.pos_buffer.clear()
         self.current_speed = 0
         self.prev_progress = 0.0
