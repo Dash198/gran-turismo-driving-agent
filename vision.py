@@ -224,7 +224,7 @@ class VisionInterface:
         dx = pos[0] - self.map_center[0]
         dy = pos[1] - self.map_center[1]
         angle = np.arctan2(dy, dx)
-        progress = (angle + np.pi) / (2 * np.pi)
+        progress = (-angle + np.pi) / (2 * np.pi)  # Negated: track goes anti-clockwise
         dist = np.sqrt(dx * dx + dy * dy)
         return progress, dist
 
