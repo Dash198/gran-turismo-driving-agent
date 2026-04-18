@@ -24,6 +24,7 @@ cv2.createTrackbar("Area Max", WIN, 80, 500, lambda x: None)
 positions = []
 recording = False
 step = 0
+last_pos = None
 
 print("=" * 50)
 print("TRACK CALIBRATION")
@@ -64,7 +65,15 @@ while True:
 
     y, x, h, w = vision.MAP_ROI
     map_roi = raw[y:y+h, x:x+w]
-    pos, mask, n_all, n_valid = detect_dot(map_roi, s_min, v_min, a_min, a_max)
+    raw_pos, mask, n_all, n_valid = detect_dot(map_roi, s_min, v_min, a_min, a_max)
+
+    # Temporal filter: reject teleports (noise jumps 30+px, car moves ~1px/frame)
+    pos = None
+    if raw_pos is not None:
+        if last_pos is None or np.linalg.norm(np.array(raw_pos) - np.array(last_pos)) < 5.0:
+            pos = raw_pos
+            last_pos = pos
+        # else: noise teleport, ignore
 
     if recording:
         step += 1
@@ -101,7 +110,7 @@ while True:
         cv2.putText(info, "Tune sliders, then press S to start", (10, 18), f, 0.4, (0, 255, 0), 1)
 
     pos_str = f"({pos[0]:.1f}, {pos[1]:.1f})" if pos else "NONE"
-    cv2.putText(info, f"Pos: {pos_str}  Contours: {n_all}  Valid: {n_valid}", (10, 38), f, 0.35, (200, 200, 200), 1)
+    cv2.putText(info, f"Pos: {pos_str}  Contours: {n_all}  Valid: {n_valid}   S=rec  R=clear  Q=save", (10, 38), f, 0.3, (200, 200, 200), 1)
 
     display = np.vstack([top, info])
     cv2.imshow(WIN, display)
@@ -112,6 +121,12 @@ while True:
         positions = []
         step = 0
         print(f"🔴 Recording! S_min={s_min}, V_min={v_min}, Area={a_min}-{a_max}")
+    elif key == ord('r'):
+        positions = []
+        step = 0
+        last_pos = None
+        recording = False
+        print("🔄 Path cleared!")
     elif key == ord('q'):
         break
 

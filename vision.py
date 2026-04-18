@@ -20,6 +20,7 @@ class VisionInterface:
 
         self.last_detected_lap = 1
         self.lap_read_history = []
+        self._last_map_pos = None  # Temporal filter for red dot noise
 
         # Map center for progress tracking (polar angle fallback)
         self.map_center = (39.0, 41.0)
@@ -40,9 +41,9 @@ class VisionInterface:
         self.upper_blue = np.array([135, 255, 255])
 
         # Red braking zones (wraparound hue)
-        self.lower_red1 = np.array([0, 140, 50])
+        self.lower_red1 = np.array([0, 88, 3])
         self.upper_red1 = np.array([10, 255, 255])
-        self.lower_red2 = np.array([170, 140, 50])
+        self.lower_red2 = np.array([170, 88, 3])
         self.upper_red2 = np.array([180, 255, 255])
 
         # Road surface (gray asphalt)
@@ -243,7 +244,15 @@ class VisionInterface:
             return None
         cx = M["m10"] / M["m00"]
         cy = M["m01"] / M["m00"]
-        return (float(cx), float(cy))
+        candidate = (float(cx), float(cy))
+
+        # Temporal filter: reject teleports (noise jumps randomly, car moves ~1px/frame)
+        if self._last_map_pos is not None:
+            jump = np.linalg.norm(np.array(candidate) - np.array(self._last_map_pos))
+            if jump > 5.0:
+                return self._last_map_pos  # Return last known good position
+        self._last_map_pos = candidate
+        return candidate
 
     def get_progress_percent(self, frame):
         """Returns (progress 0-1, dist) via calibrated path or polar angle fallback."""
