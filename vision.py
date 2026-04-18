@@ -21,10 +21,18 @@ class VisionInterface:
         self.last_detected_lap = 1
         self.lap_read_history = []
 
-        # Map center for progress tracking (ROI-relative coordinates)
-        # MAP_ROI starts at y=160, x=2. Frame-space center was (39, 201).
-        # ROI-relative: x=39 (within 80px width), y=201-160=41 (within 66px height)
+        # Map center for progress tracking (polar angle fallback)
         self.map_center = (39.0, 41.0)
+
+        # Load calibrated track path (if exists)
+        import os
+        wp_path = os.path.join(os.path.dirname(__file__), 'track_waypoints.npy')
+        if os.path.exists(wp_path):
+            self.track_waypoints = np.load(wp_path)
+            print(f"\u2705 Loaded {len(self.track_waypoints)} track waypoints")
+        else:
+            self.track_waypoints = None
+            print("\u26a0\ufe0f  No track_waypoints.npy — using polar angle fallback")
 
         # ── COLOR TUNING ──
         # Blue racing line
@@ -217,16 +225,26 @@ class VisionInterface:
         return None
 
     def get_progress_percent(self, frame):
-        """Returns (progress 0-1, dist_from_center) via polar angle on minimap."""
+        """Returns (progress 0-1, dist) via calibrated path or polar angle fallback."""
         pos = self.get_map_position(frame)
         if pos is None:
             return None, None
-        dx = pos[0] - self.map_center[0]
-        dy = pos[1] - self.map_center[1]
-        angle = np.arctan2(dy, dx)
-        progress = (-angle + np.pi) / (2 * np.pi)  # Negated: track goes anti-clockwise
-        dist = np.sqrt(dx * dx + dy * dy)
-        return progress, dist
+
+        if self.track_waypoints is not None:
+            # Path-based: find nearest waypoint
+            pos_arr = np.array(pos)
+            dists = np.linalg.norm(self.track_waypoints - pos_arr, axis=1)
+            nearest_idx = np.argmin(dists)
+            progress = nearest_idx / len(self.track_waypoints)
+            return progress, float(dists[nearest_idx])
+        else:
+            # Polar angle fallback
+            dx = pos[0] - self.map_center[0]
+            dy = pos[1] - self.map_center[1]
+            angle = np.arctan2(dy, dx)
+            progress = (-angle + np.pi) / (2 * np.pi)
+            dist = np.sqrt(dx * dx + dy * dy)
+            return progress, dist
 
     def check_collision(self, frame):
         """Detects sparks (yellow/orange pixels in collision ROI)."""
