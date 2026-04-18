@@ -295,3 +295,5 @@ class VisionInterface:
     def reset_lap(self):
         self.last_detected_lap = 1
         self.lap_read_history = []
+        self._last_map_pos = None
+        self._map_miss_count = 0
