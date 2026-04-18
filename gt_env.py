@@ -147,6 +147,9 @@ class GranTurismoEnv(gym.Env):
         # ═══════════════════════════════════
 
         # A. Waypoint — discrete, one-shot (immune to jitter)
+        progress_delta = current_progress - self.prev_progress
+        if progress_delta < -0.5:  # Lap wraparound
+            progress_delta = (1.0 - self.prev_progress) + current_progress
         # Jitter can trigger at most 1 false crossing = +30 total.
         # Driving through 25 checkpoints = +750. Standing still = +30 max.
         current_wp = int(current_progress * self.NUM_WAYPOINTS) % self.NUM_WAYPOINTS
