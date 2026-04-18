@@ -218,11 +218,35 @@ class VisionInterface:
         mask1 = cv2.inRange(hsv, self.lower_red1, self.upper_red1)
         mask2 = cv2.inRange(hsv, self.lower_red2, self.upper_red2)
         mask = cv2.bitwise_or(mask1, mask2)
-        points = cv2.findNonZero(mask)
-        if points is not None:
-            avg_pos = np.mean(points, axis=0)[0]
-            return (float(avg_pos[0]), float(avg_pos[1]))
-        return None
+
+        # Tighten: require high saturation + value (car dot is bright red, noise is dim)
+        sat = hsv[:, :, 1]
+        val = hsv[:, :, 2]
+        bright_mask = cv2.bitwise_and(mask, cv2.inRange(sat, 160, 255))
+        bright_mask = cv2.bitwise_and(bright_mask, cv2.inRange(val, 120, 255))
+
+        # Erode to kill scattered single-pixel noise, then dilate back
+        bright_mask = cv2.erode(bright_mask, self._k3, iterations=1)
+        bright_mask = cv2.dilate(bright_mask, self._k3, iterations=1)
+
+        # Find contours — pick the one with area closest to car dot size (~5-50 px²)
+        contours, _ = cv2.findContours(bright_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+
+        # Filter by area: car dot is ~5-80 px²
+        valid = [(c, cv2.contourArea(c)) for c in contours if 3 <= cv2.contourArea(c) <= 80]
+        if not valid:
+            return None
+
+        # Pick the largest valid contour
+        best = max(valid, key=lambda x: x[1])[0]
+        M = cv2.moments(best)
+        if M["m00"] == 0:
+            return None
+        cx = M["m10"] / M["m00"]
+        cy = M["m01"] / M["m00"]
+        return (float(cx), float(cy))
 
     def get_progress_percent(self, frame):
         """Returns (progress 0-1, dist) via calibrated path or polar angle fallback."""
