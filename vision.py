@@ -21,6 +21,7 @@ class VisionInterface:
         self.last_detected_lap = 1
         self.lap_read_history = []
         self._last_map_pos = None  # Temporal filter for red dot noise
+        self._map_miss_count = 0   # Reset lock after consecutive misses
 
         # Map center for progress tracking (polar angle fallback)
         self.map_center = (39.0, 41.0)
@@ -41,9 +42,9 @@ class VisionInterface:
         self.upper_blue = np.array([135, 255, 255])
 
         # Red braking zones (wraparound hue)
-        self.lower_red1 = np.array([0, 88, 3])
+        self.lower_red1 = np.array([0, 140, 94])
         self.upper_red1 = np.array([10, 255, 255])
-        self.lower_red2 = np.array([170, 88, 3])
+        self.lower_red2 = np.array([170, 140, 94])
         self.upper_red2 = np.array([180, 255, 255])
 
         # Road surface (gray asphalt)
@@ -249,8 +250,13 @@ class VisionInterface:
         # Temporal filter: reject teleports (noise jumps randomly, car moves ~1px/frame)
         if self._last_map_pos is not None:
             jump = np.linalg.norm(np.array(candidate) - np.array(self._last_map_pos))
-            if jump > 5.0:
-                return self._last_map_pos  # Return last known good position
+            if jump > 8.0:
+                self._map_miss_count += 1
+                if self._map_miss_count > 20:  # Lost tracking, re-acquire
+                    self._last_map_pos = None
+                    self._map_miss_count = 0
+                return None  # Don't return stale position
+        self._map_miss_count = 0
         self._last_map_pos = candidate
         return candidate
 
