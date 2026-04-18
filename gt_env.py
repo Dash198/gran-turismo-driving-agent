@@ -50,7 +50,8 @@ class GranTurismoEnv(gym.Env):
 
         # Waypoint system — discrete one-shot rewards (jitter-proof)
         self.NUM_WAYPOINTS = 50
-        self.max_waypoint_idx = -1  # Highest checkpoint crossed
+        self.max_waypoint_idx = -1
+        self._start_waypoint = 0
 
         # Action history (Paper 1: 3-step steering + gas history)
         self.steer_history = deque([0.0, 0.0, 0.0], maxlen=3)
@@ -155,7 +156,8 @@ class GranTurismoEnv(gym.Env):
         current_wp = int(current_progress * self.NUM_WAYPOINTS) % self.NUM_WAYPOINTS
         r_progress = 0.0
         if self.max_waypoint_idx == -1:
-            self.max_waypoint_idx = current_wp  # Initialize on first step
+            self.max_waypoint_idx = current_wp
+            self._start_waypoint = current_wp
         else:
             fwd_dist = (current_wp - self.max_waypoint_idx) % self.NUM_WAYPOINTS
             if 0 < fwd_dist <= 5:  # Crossed 1-5 new waypoints forward
@@ -315,8 +317,8 @@ class GranTurismoEnv(gym.Env):
             ocr_spd = self.current_speed if self.current_speed else 0
             cv2.putText(db, f"SPD: {ocr_spd} km/h", (sx, 48), f, 0.33, WHITE, 1)
             cv2.putText(db, f"STEP: {self.current_step}", (sx, 64), f, 0.3, DIM, 1)
-            wp_str = f"WP: {self.max_waypoint_idx}/{self.NUM_WAYPOINTS}"
-            cv2.putText(db, wp_str, (sx, 80), f, 0.3, (0, 255, 255), 1)
+            wp_crossed = (self.max_waypoint_idx - self._start_waypoint) % self.NUM_WAYPOINTS if self.max_waypoint_idx >= 0 else 0
+            cv2.putText(db, f"WP: {wp_crossed}/{self.NUM_WAYPOINTS}  {self.prev_progress*100:.0f}%", (sx, 80), f, 0.28, (0, 255, 255), 1)
 
             r_col = (0, 255, 0) if rew >= 0 else (0, 0, 255)
             cv2.putText(db, f"{rew:+.1f}", (sx, 110), f, 0.7, r_col, 2)

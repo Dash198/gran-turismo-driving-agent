@@ -21,8 +21,10 @@ class VisionInterface:
         self.last_detected_lap = 1
         self.lap_read_history = []
 
-        # Map center for progress tracking
-        self.map_center = (39.0, 201.0)
+        # Map center for progress tracking (ROI-relative coordinates)
+        # MAP_ROI starts at y=160, x=2. Frame-space center was (39, 201).
+        # ROI-relative: x=39 (within 80px width), y=201-160=41 (within 66px height)
+        self.map_center = (39.0, 41.0)
 
         # ── COLOR TUNING ──
         # Blue racing line
