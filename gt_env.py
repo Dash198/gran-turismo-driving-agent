@@ -160,10 +160,11 @@ class GranTurismoEnv(gym.Env):
             self._start_waypoint = current_wp
         else:
             fwd_dist = (current_wp - self.max_waypoint_idx) % self.NUM_WAYPOINTS
-            if 0 < fwd_dist <= 5:  # Crossed 1-5 new waypoints forward
-                r_progress = fwd_dist * 30.0
+            if 0 < fwd_dist <= self.NUM_WAYPOINTS // 2:  # Forward up to half-track (handles wrapping)
+                capped = min(fwd_dist, 5)  # Cap reward at 5 WP per step (prevents angular spikes)
+                r_progress = capped * 30.0
                 self.max_waypoint_idx = current_wp
-            # fwd_dist > 5 = backward wrap or huge skip, ignore
+            # fwd_dist > half = backward motion, ignore
         self.prev_progress = current_progress
 
         # B. Time penalty — constant -0.1/step
