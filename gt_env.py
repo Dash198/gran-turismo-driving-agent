@@ -47,11 +47,10 @@ class GranTurismoEnv(gym.Env):
         # Buffers
         self.pos_buffer = deque(maxlen=30)
         self.progress_buffer = deque(maxlen=5)
-        self.progress_reward_buffer = deque(maxlen=20)  # Smooth over 20 frames (zero-mean jitter)
 
-        # Frame-diff motion detection (immune to minimap jitter)
-        self._prev_motion_frame = None
-        self._motion_buffer = deque(maxlen=15)  # ~0.75s at 20FPS
+        # Waypoint system — discrete one-shot rewards (jitter-proof)
+        self.NUM_WAYPOINTS = 50
+        self.max_waypoint_idx = -1  # Highest checkpoint crossed
 
         # Action history (Paper 1: 3-step steering + gas history)
         self.steer_history = deque([0.0, 0.0, 0.0], maxlen=3)
@@ -144,22 +143,26 @@ class GranTurismoEnv(gym.Env):
         self.estimated_speed = instant_disp / dt
 
         # ═══════════════════════════════════
-        # 6. REWARD — progress-dominated
+        # 6. REWARD — waypoint + time penalty
         # ═══════════════════════════════════
 
-        # A. Progress — primary signal (smoothed, NO displacement gate)
-        # Jitter is zero-mean over 20 frames — cancels out naturally
-        progress_delta = current_progress - self.prev_progress
-        if progress_delta < -0.5:  # Lap wraparound
-            progress_delta = (1.0 - self.prev_progress) + current_progress
-        progress_delta = max(progress_delta, -0.1)
-        self.progress_reward_buffer.append(progress_delta * 1500.0)
-        r_progress = float(np.mean(self.progress_reward_buffer))
+        # A. Waypoint — discrete, one-shot (immune to jitter)
+        # Jitter can trigger at most 1 false crossing = +30 total.
+        # Driving through 25 checkpoints = +750. Standing still = +30 max.
+        current_wp = int(current_progress * self.NUM_WAYPOINTS) % self.NUM_WAYPOINTS
+        r_progress = 0.0
+        if self.max_waypoint_idx == -1:
+            self.max_waypoint_idx = current_wp  # Initialize on first step
+        else:
+            fwd_dist = (current_wp - self.max_waypoint_idx) % self.NUM_WAYPOINTS
+            if 0 < fwd_dist <= 5:  # Crossed 1-5 new waypoints forward
+                r_progress = fwd_dist * 30.0
+                self.max_waypoint_idx = current_wp
+            # fwd_dist > 5 = backward wrap or huge skip, ignore
         self.prev_progress = current_progress
 
-        # B. Time penalty — makes farming mathematically unprofitable
-        # Standing still: -0.3 × 5000 = -1500. Driving: +0.21 × 5000 = +1050. Gap = 2550.
-        r_time = -0.3
+        # B. Time penalty — constant -0.1/step
+        r_time = -0.1
 
         # C. Steering change penalty
         steer_delta = abs(steer - self.steer_history[-2])
@@ -309,7 +312,8 @@ class GranTurismoEnv(gym.Env):
             ocr_spd = self.current_speed if self.current_speed else 0
             cv2.putText(db, f"SPD: {ocr_spd} km/h", (sx, 48), f, 0.33, WHITE, 1)
             cv2.putText(db, f"STEP: {self.current_step}", (sx, 64), f, 0.3, DIM, 1)
-            cv2.putText(db, f"DISP: {displacement:.1f}", (sx, 80), f, 0.3, DIM, 1)
+            wp_str = f"WP: {self.max_waypoint_idx}/{self.NUM_WAYPOINTS}"
+            cv2.putText(db, wp_str, (sx, 80), f, 0.3, (0, 255, 255), 1)
 
             r_col = (0, 255, 0) if rew >= 0 else (0, 0, 255)
             cv2.putText(db, f"{rew:+.1f}", (sx, 110), f, 0.7, r_col, 2)
@@ -388,11 +392,9 @@ class GranTurismoEnv(gym.Env):
         self.prev_progress = 0.0
         self.estimated_speed = 0.0
         self.progress_at_gate = None
-        self._prev_motion_frame = None
-        self._motion_buffer.clear()
         self.last_step_time = time.time()
         self.progress_buffer.clear()
-        self.progress_reward_buffer.clear()
+        self.max_waypoint_idx = -1
         self.steer_history = deque([0.0, 0.0, 0.0], maxlen=3)
         self.gas_history = deque([0.0, 0.0, 0.0], maxlen=3)
 
