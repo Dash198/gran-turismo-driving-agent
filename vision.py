@@ -219,25 +219,22 @@ class VisionInterface:
         mask2 = cv2.inRange(hsv, self.lower_red2, self.upper_red2)
         mask = cv2.bitwise_or(mask1, mask2)
 
-        # Tighten: require high saturation + value (car dot is bright red, noise is dim)
+        # Tighten: require decent saturation + value (car dot is bright red, noise is dim)
         sat = hsv[:, :, 1]
         val = hsv[:, :, 2]
-        bright_mask = cv2.bitwise_and(mask, cv2.inRange(sat, 160, 255))
-        bright_mask = cv2.bitwise_and(bright_mask, cv2.inRange(val, 120, 255))
+        bright_mask = cv2.bitwise_and(mask, cv2.inRange(sat, 100, 255))
+        bright_mask = cv2.bitwise_and(bright_mask, cv2.inRange(val, 80, 255))
 
-        # Erode to kill scattered single-pixel noise, then dilate back
-        bright_mask = cv2.erode(bright_mask, self._k3, iterations=1)
-        bright_mask = cv2.dilate(bright_mask, self._k3, iterations=1)
-
-        # Find contours — pick the one with area closest to car dot size (~5-50 px²)
+        # Find contours — pick the one with area closest to car dot size
         contours, _ = cv2.findContours(bright_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return None
 
-        # Filter by area: car dot is ~5-80 px²
-        valid = [(c, cv2.contourArea(c)) for c in contours if 3 <= cv2.contourArea(c) <= 80]
+        # Filter by area: car dot is ~1-80 px²
+        valid = [(c, cv2.contourArea(c)) for c in contours if 1 <= cv2.contourArea(c) <= 80]
         if not valid:
-            return None
+            # Fallback: use any contour
+            valid = [(c, max(cv2.contourArea(c), 0.1)) for c in contours]
 
         # Pick the largest valid contour
         best = max(valid, key=lambda x: x[1])[0]

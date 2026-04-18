@@ -30,11 +30,26 @@ while True:
     pos = vision.get_map_position(raw)
 
     # Dashboard
-    db = np.zeros((120, 400, 3), dtype=np.uint8)
+    db = np.zeros((140, 480, 3), dtype=np.uint8)
     f = cv2.FONT_HERSHEY_SIMPLEX
 
     if pos:
         cv2.putText(db, f"Pos: ({pos[0]:.1f}, {pos[1]:.1f})", (10, 25), f, 0.4, (200, 200, 200), 1)
+    else:
+        cv2.putText(db, "NO DOT DETECTED", (10, 25), f, 0.4, (0, 0, 255), 1)
+
+    # Show minimap debug
+    y, x, h, w = vision.MAP_ROI
+    map_roi = raw[y:y+h, x:x+w]
+    hsv = cv2.cvtColor(map_roi, cv2.COLOR_BGR2HSV)
+    m1 = cv2.inRange(hsv, vision.lower_red1, vision.upper_red1)
+    m2 = cv2.inRange(hsv, vision.lower_red2, vision.upper_red2)
+    rmask = cv2.bitwise_or(m1, m2)
+    # Show both
+    map_big = cv2.resize(map_roi, (80, 66))
+    mask_big = cv2.resize(cv2.cvtColor(rmask, cv2.COLOR_GRAY2BGR), (80, 66))
+    db[0:66, 300:380] = map_big
+    db[0:66, 380:460] = mask_big if db.shape[1] >= 460 else mask_big[:, :db.shape[1]-380]
 
     if recording:
         step += 1
