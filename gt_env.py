@@ -194,7 +194,7 @@ class GranTurismoEnv(gym.Env):
 
         # Stuck/Loiter — displacement safety net (imperfect, but reward math does the real work)
         if not in_grace:
-            if displacement < 8.0:
+            if displacement < 1.0:
                 self.stuck_frames += 1
                 self.loiter_frames += 1
             else:
