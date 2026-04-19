@@ -251,18 +251,19 @@ class VisionInterface:
         # This kills audience/background red that appears nowhere near the minimap track
         if self.track_waypoints is not None:
             dists_to_track = np.linalg.norm(self.track_waypoints - np.array(candidate), axis=1)
-            if np.min(dists_to_track) > 6.0:  # >6px from nearest waypoint = noise
+            if np.min(dists_to_track) > 15.0:  # >15px from nearest waypoint (was 6px - too tight for wide corners)
                 return None
 
         # Temporal filter: reject teleports (noise jumps randomly, car moves ~1px/frame)
         if self._last_map_pos is not None:
             jump = np.linalg.norm(np.array(candidate) - np.array(self._last_map_pos))
-            if jump > 8.0:
+            if jump > 15.0:  # was 8.0px - increased to prevent frame-drop lockouts
                 self._map_miss_count += 1
                 if self._map_miss_count > 20:  # Lost tracking, re-acquire
                     self._last_map_pos = None
                     self._map_miss_count = 0
                 return None
+
         self._map_miss_count = 0
         self._last_map_pos = candidate
         return candidate

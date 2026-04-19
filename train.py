@@ -7,6 +7,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
 
+from custom_policy import policy_kwargs
 from gt_env import GranTurismoEnv
 
 # --- CONFIGURATION ---
@@ -23,23 +24,16 @@ def make_env():
     """
     Factory function for the environment.
     """
-    # 1. Initialize Base Env (Check your camera index here!)
-    env = GranTurismoEnv(camera_index=10)
-
-    # 2. Wrap with Monitor (Crucial for plotting graphs later)
+    env = GranTurismoEnv(camera_index=2)
     env = Monitor(env, LOG_DIR)
     return env
 
 
 def get_latest_checkpoint(path, prefix):
-    # 1. Always prioritize the manual interruption save
-    interrupted_path = os.path.join(path, "gtr_interrupted.zip")
+    interrupted_path = os.path.join(path, f"{prefix}_interrupted.zip")
     if os.path.exists(interrupted_path):
-        # We don't have a step count for this, so we return 0 or
-        # try to parse it from the logs if needed.
         return interrupted_path, 0
 
-    # 2. Fallback to the highest numbered checkpoint
     files = glob.glob(f"{path}/{prefix}_*.zip")
     if not files:
         return None, 0
@@ -59,9 +53,7 @@ def get_latest_checkpoint(path, prefix):
 
 def main():
     print(">>> 1. Initializing Environment...")
-    # Create the vectorized environment
     env = DummyVecEnv([make_env])
-    # Stack 4 frames (Memory of motion)
     env = VecFrameStack(env, n_stack=4, channels_order="last")
 
     print(">>> 2. Checking for Saved Models...")
@@ -70,31 +62,29 @@ def main():
     if latest_path:
         print(f"💾 FOUND SAVE: '{latest_path}' (Step {steps_so_far})")
         print("⚡ Loading Model...")
+        model = PPO.load(latest_path, env=env, policy_kwargs=policy_kwargs)
 
-        # Load the model and attach the current env
-        model = PPO.load(latest_path, env=env)
-
-        # --- CLEANUP LOGIC ---
-        # "Empty the dir each time we load"
-        # We delete everything EXCEPT the file we just loaded.
         print("🧹 Cleaning up old checkpoints...")
         for f in glob.glob(f"{MODEL_DIR}/{MODEL_PREFIX}_*.zip"):
-            if f != latest_path:  # Don't delete the one we are using!
+            if f != latest_path:
                 try:
                     os.remove(f)
                     print(f"   Deleted old: {f}")
                 except OSError as e:
                     print(f"   Error deleting {f}: {e}")
-        # ---------------------
 
     else:
         print("✨ No save found. Creating NEW Agent from scratch...")
         model = PPO(
-            "CnnPolicy", env, verbose=1, tensorboard_log=LOG_DIR, learning_rate=0.0003
+            "MultiInputPolicy",
+            env,
+            verbose=1,
+            tensorboard_log=LOG_DIR,
+            learning_rate=0.0003,
+            policy_kwargs=policy_kwargs,
         )
         steps_so_far = 0
 
-    # Setup the saver
     checkpoint_callback = CheckpointCallback(
         save_freq=5000, save_path=MODEL_DIR, name_prefix=MODEL_PREFIX
     )
@@ -106,7 +96,7 @@ def main():
             total_timesteps=TOTAL_TIMESTEPS,
             callback=checkpoint_callback,
             progress_bar=True,
-            reset_num_timesteps=False,  # <--- CRITICAL: Keeps the Tensorboard graph continuous
+            reset_num_timesteps=False,
             tb_log_name="PPO",
         )
         print(">>> Training Finished!")
@@ -114,7 +104,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\n>>> Training Paused. Saving emergency backup...")
-        model.save(f"{MODEL_DIR}/gtr_interrupted")
+        model.save(f"{MODEL_DIR}/{MODEL_PREFIX}_interrupted")
     finally:
         env.close()
 

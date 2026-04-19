@@ -1,20 +1,25 @@
 import cv2
 import numpy as np
 
-# Use the camera index you've set for OBS (usually 2 or 10)
-CAM_INDEX = 2
+
+def nothing(x):
+    pass
 
 
-def debug_stuck():
-    cap = cv2.VideoCapture(CAM_INDEX)
+def calibrate_steering_center():
+    cap = cv2.VideoCapture(10)
+    if not cap.isOpened() or not cap.read()[0]:
+        cap.release()
+        cap = cv2.VideoCapture(2)
 
-    # Updated ROI based on your previous turn's numbers [cite: 11-02-2026]
-    # Format: y, x, h, w
-    MAP_ROI = (44, 20, 70, 91)
-    prev_pos = None
+    cv2.namedWindow("Steering Center Calibrator")
+    # The ROI is 160 pixels wide. Start the slider in the mathematical middle (80).
+    cv2.createTrackbar("Center Pixel", "Steering Center Calibrator", 80, 160, nothing)
 
-    print("🔍 Starting Stuck Detection Debugger...")
-    print("Check if the green circle is actually following the red car dot.")
+    print("--- 🎯 STEERING CENTER CALIBRATION ---")
+    print("1. Park the car straight on the track.")
+    print("2. Move the slider until the green line splits the car perfectly in half.")
+    print("3. Press 'Q' to quit and get your number.")
 
     while True:
         ret, frame = cap.read()
@@ -22,55 +27,44 @@ def debug_stuck():
             break
 
         frame = cv2.resize(frame, (640, 480))
-        y, x, h, w = MAP_ROI
-        roi = frame[y : y + h, x : x + w]
 
-        # 1. Isolate the Red Dot
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        # Red is split at the 0/180 degree mark in HSV
-        mask1 = cv2.inRange(hsv, np.array([0, 140, 50]), np.array([10, 255, 255]))
-        mask2 = cv2.inRange(hsv, np.array([170, 140, 50]), np.array([180, 255, 255]))
-        mask = cv2.bitwise_or(mask1, mask2)
+        # 1. Recreate your exact 20% to 50% line detection ROI
+        h, w = frame.shape[:2]
+        # Shift the vision down to the actual road
+        roi_top = int(h * 0.5)  # Start at 50% (Y=240, just below the minimap)
+        roi_bot = int(h * 0.8)  # End at 80% (Y=384, right around the car hood)
+        roi_frame = frame[roi_top:roi_bot, :]
 
-        # 2. Track the Dot
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        current_pos = None
-        dist = 0.0
+        # 2. Resize to 160x60 exactly like vision.py does
+        small_roi = cv2.resize(roi_frame, (160, 60))
 
-        if contours:
-            largest = max(contours, key=cv2.contourArea)
-            M = cv2.moments(largest)
-            if M["m00"] != 0:
-                current_pos = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+        # 3. Scale it up by 4x so we don't have to squint at a tiny box
+        display = cv2.resize(small_roi, (640, 240), interpolation=cv2.INTER_NEAREST)
 
-        # 3. Calculate Jitter/Movement
-        if prev_pos and current_pos:
-            dist = np.linalg.norm(np.array(current_pos) - np.array(prev_pos))
+        # 4. Get trackbar value (0 to 160)
+        center_val = cv2.getTrackbarPos("Center Pixel", "Steering Center Calibrator")
 
-        # 4. Visualization
-        debug_view = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-        if current_pos:
-            # Draw a green circle where the AI thinks the car is
-            cv2.circle(debug_view, current_pos, 4, (0, 255, 0), -1)
-            cv2.circle(roi, current_pos, 4, (0, 255, 0), -1)
-
+        # 5. Draw the vertical line
+        # We multiply by 4 because we scaled the 160px image up to 640px
+        draw_x = center_val * 4
+        cv2.line(display, (draw_x, 0), (draw_x, 240), (0, 255, 0), 2)
         cv2.putText(
-            debug_view,
-            f"Move Dist: {dist:.2f}",
-            (5, 20),
+            display,
+            f"Current Offset: {center_val}",
+            (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 0),
+            0.8,
+            (0, 255, 0),
             2,
         )
 
-        # Show what's happening
-        cv2.imshow("1. Original Map ROI", roi)
-        cv2.imshow("2. What the AI Sees (Red Mask)", debug_view)
-
-        prev_pos = current_pos
+        cv2.imshow("Steering Center Calibrator", display)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
+            print("\n" + "=" * 45)
+            print(f"✅ YOUR NEW OFFSET IS: {center_val}")
+            print(f"Update vision.py to: normalized_x = (cx - {center_val}) / 80.0")
+            print("=" * 45)
             break
 
     cap.release()
@@ -78,4 +72,4 @@ def debug_stuck():
 
 
 if __name__ == "__main__":
-    debug_stuck()
+    calibrate_steering_center()
