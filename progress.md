@@ -381,3 +381,126 @@ batch_size:      256
 2. The v1 catastrophic forgetting was caused by `lr=3e-4` and `buffer=50K`, NOT the observation design
 3. With `lr=3e-5` and `buffer=100K`, the v1 peak of +3,757 should be sustained rather than forgotten
 4. Steering history in aux gives the CNN temporal context that v1 lacked
+
+---
+
+## v3: Training Results & Debugging
+
+Branch: `v3-hybrid`
+
+### Run 1: Initial v3 (284 episodes, 460K steps, ~6 hours)
+
+```
+Episodes:     284        |  Throughput:  19.9 steps/s (median)
+Mean Reward:  +204.7     |  Best:        +616.8
+Mean Length:  1619 steps  |  Median:      782 steps
+Reward/Step:  +0.50      |  Trend:       📉 -97.1
+Corr (r,l):   -0.950     |  ⚠️ FARMING DETECTED
+```
+
+**Critical finding:** `short eps earn 0.99/step vs -0.11/step for long eps`.
+
+**Root cause chain — 4 bugs discovered:**
+
+#### Bug 1: Continuous progress jitter is not zero-mean
+The original reward: `progress_delta × 1500`, smoothed over 20 frames. We assumed minimap jitter was zero-mean and would cancel. It didn't — the signal had a slight positive bias (~+0.05/step), which competed with the -0.3 time penalty.
+
+**Fix:** Replaced continuous progress with **discrete waypoint system** — 50 checkpoints, +30 reward once per crossing. Jitter can trigger at most 1 false crossing = +30 total.
+
+#### Bug 2: `map_center` in wrong coordinate space
+```python
+# Was frame-space (y=201), but get_map_position returns ROI-relative (y=0-66):
+self.map_center = (39.0, 201.0)  # BUG: dy always ~= -160
+
+# Fixed to ROI-relative:
+self.map_center = (39.0, 41.0)   # 201 - 160 = 41
+```
+**Impact:** ALL progress readings were clustered around 22% regardless of actual car position. The continuous progress reward was essentially random noise — the agent couldn't learn direction from it.
+
+#### Bug 3: Polar angle direction inverted
+`atan2(dy, dx)` increases clockwise in screen coordinates (Y-down), but the track goes anti-clockwise. Progress DECREASED when driving forward.
+
+**Fix:** `progress = (-angle + π) / (2π)` — negated the angle.
+
+#### Bug 4: Polar angle non-monotonic on non-circular tracks
+Even with bugs 2-3 fixed, the polar angle **backtracks** on sections of the track where the road doubles back in angular space. Some sections covered 30% of angular range in a few seconds, then the angle dropped back. This caused `max_waypoint_idx` to spike ahead, creating dead zones where no rewards could be earned.
+
+```
+step  800: progress=27%, max_wp=16
+           → SPIKE to wp=36 in between frames (angular non-uniformity)
+step  900: progress=35%, wp=17, max_wp=36 ← gap of 19, never catches up
+step 1700: progress=55%, wp=27, max_wp=36 ← STILL 9 behind, no rewards for 900 steps
+```
+
+**Conclusion:** Polar angle progress is fundamentally broken for non-circular tracks.
+
+### Solution: Calibrated Track Path
+
+Replaced polar angle entirely with **path-based progress** from a manually recorded calibration lap.
+
+#### Calibration Tool (`calibrate_track.py`)
+1. Live minimap + red mask display with HSV tuning trackbars
+2. Temporal outlier rejection (>5px jump = noise, reset after 20 misses)
+3. Records car dot positions → generates 50 equally-spaced waypoints along the actual path
+4. Saves `track_waypoints.npy` + auto-updates `vision.py` thresholds
+5. Keys: S=start recording, R=clear path, Q=save+quit
+
+#### Red Dot Detection Overhaul
+The original `get_map_position` used `np.mean(ALL_red_pixels)` — background noise (audience red, terrain) dragged the centroid everywhere.
+
+New pipeline:
+```
+1. HSV red mask (tunable S_min, V_min thresholds)
+2. Contour detection → filter by area (1-80 px²)
+3. Track-path validation: reject if >6px from nearest calibrated waypoint  ← KEY
+4. Temporal filter: reject >8px jumps, re-acquire after 20 consecutive misses
+5. Pick largest valid contour centroid
+```
+
+**Track-path validation** is the most important layer — even if the audience has red pixels, they're nowhere near the minimap track path, so they get rejected immediately.
+
+#### Progress System (current)
+```python
+# In get_progress_percent():
+nearest_idx = argmin(||track_waypoints - current_pos||)
+progress = nearest_idx / 50
+
+# In step() reward:
+current_wp = int(progress * 50) % 50
+fwd_dist = (current_wp - max_wp) % 50
+if 0 < fwd_dist <= 25:  # Forward up to half-track
+    capped = min(fwd_dist, 5)
+    r_progress = capped * 30.0
+    max_wp = current_wp
+```
+
+#### Reward Function (current)
+```python
+r_progress = 0-150/step    # +30 per new waypoint crossed (capped at 5/step)
+r_time     = -0.1/step     # Constant time penalty
+r_steer    = -|Δsteer|×0.3 # Steering smoothness
+```
+
+Expected totals per episode:
+| Scenario | Waypoints | Lap | Time | Steer | Total |
+|---|---|---|---|---|---|
+| Full lap (~2400 steps) | +1500 | +1000 | -240 | -288 | **+1972** |
+| Half lap (~1200 steps) | +750 | 0 | -120 | -144 | **+486** |
+| Standing still (5000 steps) | ~0 | 0 | -500 | 0 | **-500** |
+
+### Anti-Farming History
+
+| Iteration | Exploit Found | Fix Applied |
+|---|---|---|
+| v1 original | Blue SUBARU banner = line detected | Gate centering on displacement |
+| v3 continuous | Minimap jitter ≠ zero-mean, +0.05/step | Discrete waypoints |
+| v3 time penalty -0.3 | Short eps still earn 0.99/step | Fix map_center coordinates |
+| v3 polar angle | Track backtracks in angular space | Calibrated path-based progress |
+| v3 audience noise | Red audience pixels → fake waypoints | Track-path validation (>6px = reject) |
+
+### Current Status (April 19, 2025)
+
+- **Progress tracking:** Path-based with calibrated waypoints ✅
+- **Anti-farming:** Track-path validation + discrete one-shot rewards ✅
+- **Training:** Starting fresh overnight run
+- **Next priority:** Observe if agent discovers forward driving with clean progress signal. If successful, re-enable collision detection.
