@@ -52,7 +52,7 @@ while True:
     if len(pos_buffer) >= 2:
         disp = np.linalg.norm(np.array(pos_buffer[-1]) - np.array(pos_buffer[0]))
 
-    # Waypoint
+    # Waypoint — sequential gating: only reward +1 per step
     cwp = int(cp * NUM_WP) % NUM_WP
     r_prog = 0.0
     if max_wp == -1:
@@ -61,12 +61,14 @@ while True:
         print(f"  INIT: start_wp={start_wp}, progress={cp*100:.1f}%")
     else:
         fd = (cwp - max_wp) % NUM_WP
-        if 0 < fd <= NUM_WP // 2:  # Forward up to half-track
-            capped = min(fd, 5)
-            r_prog = capped * 30.0
-            wp_count += fd
+        if fd == 1:                          # Exactly sequential → reward
+            r_prog = 30.0
+            wp_count += 1
             max_wp = cwp
-            print(f"  ✅ WP +{fd} (capped {capped})! wp={cwp}, crossed={wp_count}, reward=+{r_prog:.0f}")
+            print(f"  ✅ WP +1! wp={cwp}, crossed={wp_count}, reward=+30")
+        elif 1 < fd <= NUM_WP // 2:          # Ahead but not sequential → wait
+            pass                             # Don't reward, don't update max_wp
+        # fd > half = backward/noise wrap, ignore
     prev_progress = cp
 
 # Match gt_env tracking

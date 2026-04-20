@@ -147,12 +147,11 @@ class GranTurismoEnv(gym.Env):
         # 6. REWARD — waypoint + time penalty
         # ═══════════════════════════════════
 
-        # A. Waypoint — discrete, one-shot (immune to jitter)
-        progress_delta = current_progress - self.prev_progress
-        if progress_delta < -0.5:  # Lap wraparound
-            progress_delta = (1.0 - self.prev_progress) + current_progress
-        # Jitter can trigger at most 1 false crossing = +30 total.
-        # Driving through 25 checkpoints = +750. Standing still = +30 max.
+        # A. Waypoint — discrete, sequential gating (noise-proof)
+        # current_wp = where car IS right now (can teleport from noise)
+        # max_waypoint_idx = last *accepted* wp — advances at most +1 per step
+        # This means: even if noise jumps 20wps, we only reward after
+        # 20 consecutive forward steps — sustained progress, not one-off noise.
         current_wp = int(current_progress * self.NUM_WAYPOINTS) % self.NUM_WAYPOINTS
         r_progress = 0.0
         if self.max_waypoint_idx == -1:
@@ -160,11 +159,21 @@ class GranTurismoEnv(gym.Env):
             self._start_waypoint = current_wp
         else:
             fwd_dist = (current_wp - self.max_waypoint_idx) % self.NUM_WAYPOINTS
-            if 0 < fwd_dist <= self.NUM_WAYPOINTS // 2:  # Forward up to half-track (handles wrapping)
-                capped = min(fwd_dist, 5)  # Cap reward at 5 WP per step (prevents angular spikes)
-                r_progress = capped * 30.0
+            # Only accept exactly +1 step: noise teleports many waypoints but
+            # won't be rewarded until the car catches up sequentially.
+            if fwd_dist == 1:
+                r_progress = 30.0
                 self.max_waypoint_idx = current_wp
-            # fwd_dist > half = backward motion, ignore
+            elif 1 < fwd_dist <= self.NUM_WAYPOINTS // 2:
+                # Car is AHEAD of accepted idx — don't reward yet,
+                # don't update max_wp either (wait for sequential catchup).
+                # This handles genuine fast corners: next step fwd_dist will
+                # be the same or +1 and will tick through sequentially.
+                pass
+            # fwd_dist > half = backward / noise wrap, ignore
+        progress_delta = current_progress - self.prev_progress
+        if progress_delta < -0.5:  # Lap wraparound
+            progress_delta = (1.0 - self.prev_progress) + current_progress
         self.prev_progress = current_progress
 
         # B. Time penalty — constant -0.1/step
