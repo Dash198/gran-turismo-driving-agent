@@ -504,3 +504,91 @@ Expected totals per episode:
 - **Anti-farming:** Track-path validation + discrete one-shot rewards ✅
 - **Training:** Starting fresh overnight run
 - **Next priority:** Observe if agent discovers forward driving with clean progress signal. If successful, re-enable collision detection.
+
+---
+
+## v3: Run 2 (April 19–21, 2025)
+
+### Training Results (11 hours, 515 episodes, 792K steps)
+
+```
+Episodes:     515        |  Throughput:  19.8 steps/s (median)
+Mean Reward:  -621.4     |  Best:        -314.7 (ep 161)
+Median:       -588.8     |  Worst:       -1345.8 (ep 81)
+Mean Length:  1540 steps  |  Std:         152.7
+Corr (r,l):   -0.604     |  Trend:       📈 +2.9
+✅  No farming (short: -1.04/step, long: -0.24/step)
+```
+
+**Notable:** Agent reached 70% track progress in one episode — cumulative reward was +100 before a STUCK termination fired a -500 penalty, crashing the episode to -400. No positive episodes despite the agent demonstrably learning to drive.
+
+### Bugs Discovered & Fixed (April 19–21)
+
+#### Bug 5: False STUCK terminations despite agent moving
+**Symptom:** Stuck/loiter bars filling even while agent drove forward.
+
+**Root cause chain:**
+1. Track-path validation threshold was 6px — too tight. Agent taking a wide corner > 6px from ideal racing line → `get_map_position()` returned `None`
+2. On `None`, `pos_buffer` duplicated last position → entire 30-frame buffer filled with identical coords
+3. `displacement = ||buf[-1] - buf[0]|| = 0.0` → less than 8.0 threshold → stuck counter incremented every step regardless of actual movement
+
+**Fix 1:** Relaxed track-path and temporal filter thresholds from 6px → 15px (`vision.py`)
+
+**Fix 2:** Realized the displacement threshold itself was wrong for minimap scale:
+- Entire track = ~150px on minimap, lap = ~2 minutes → average speed = **1.25 px/sec**
+- 30-frame buffer at 15fps = 2 seconds → expected displacement ~2.5px
+- Old threshold of 8.0px required 4px/sec constantly → always firing on corners
+- **Fixed:** Lowered threshold from `8.0` → `1.0` in `gt_env.py`
+
+#### Bug 6: Sequential gating too strict for 20fps
+**Symptom:** After fixing STUCK: Run 2 showed no positive rewards. Investigation revealed waypoint counter barely moving.
+
+**Root cause:** Previous session introduced `fwd_dist == 1` only gating. At 20fps, car commonly moves 2 waypoints per frame (crosses boundary at high speed). This causes `fwd_dist = 2` → ignored, `max_wp` stays frozen, next step car is at `fwd_dist = 3` → still ignored. **max_wp permanently frozen** for the rest of the episode → zero waypoint reward after first skip.
+
+**Fix:** Allow `fwd_dist <= 2` to reward (+30). For all forward motion (fwd_dist up to half-track), always advance `max_wp` by exactly 1 — this prevents permanent freeze while still making noise jumps earn nothing (they advance the accepted index slowly toward the actual position over many steps).
+
+#### Bug 7: -500 terminal penalty wipes accumulated lap reward
+**Symptom:** 70% lap = ~35 waypoints × +30 = +1050, minus -154 time, minus -500 stuck = **-400 net**. Agent never sees positive signal from good laps.
+
+**Fix:** Reduced STUCK and LOITER terminal penalties from -500 → -100. The time penalty alone (-0.1/step × 5000 = -500) already makes stalling unprofitable; the large terminal hit was gratuitous.
+
+#### New: Stagnation Termination (60s no waypoint progress)
+**Problem:** Agent could drive in wrong direction or circle indefinitely for 5000 steps, accumulating only time penalty. This was causing 5k-step episodes with -500 reward — noisy, pointless data.
+
+**Fix:** Added `STAGNATION` termination: if `max_waypoint_idx` doesn't advance for 60 seconds (1200 frames at 20fps), episode ends with -200 penalty. Cuts dead episodes short and keeps the replay buffer cleaner.
+
+### Current Reward Math (post-fix)
+
+```python
+r_progress = +30.0  if fwd_dist in (1,2)   # per sequential waypoint
+r_time     = -0.1   per step                 # ~-154 for average 1540-step ep
+r_steer    = -|Δsteer| × 0.3               # smoothness penalty
+r_terminal = -100   on STUCK/LOITER
+           = -200   on STAGNATION
+           = +1000  on LAP COMPLETED
+```
+
+Expected totals (corrected):
+| Scenario | WP reward | Time | Terminal | Total |
+|---|---|---|---|---|
+| 70% lap, gets stuck | +1050 | -154 | -100 | **+796 ✅** |
+| Full lap (~2400 steps) | +1500 | -240 | +1000 | **+2260** |
+| Standing still (stagnation) | 0 | -120 (60s) | -200 | **-320** |
+| Wrong direction (stagnation) | 0 | -120 (60s) | -200 | **-320** |
+
+### Waypoint Gating — Current Design
+
+```
+Current position (minimap nearest waypoint) = current_wp
+Accepted frontier = max_waypoint_idx (advances by exactly +1 per step)
+
+fwd_dist = (current_wp - max_waypoint_idx) % 50
+
+fwd_dist == 1:  r = +30, max_wp += 1, last_wp_step = now    ← normal 15fps
+fwd_dist == 2:  r = +30, max_wp += 1, last_wp_step = now    ← normal 20fps skip
+fwd_dist 3-25:  r = 0,   max_wp += 1                        ← noise: no reward, but
+                                                              max_wp catches up in N steps
+fwd_dist > 25:  ignored  (backward / wrap)
+
+steps since last_wp_step > 60×fps → STAGNATION termination
+```
