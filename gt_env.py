@@ -147,30 +147,26 @@ class GranTurismoEnv(gym.Env):
         # 6. REWARD — waypoint + time penalty
         # ═══════════════════════════════════
 
-        # A. Waypoint — discrete, sequential gating (noise-proof)
-        # current_wp = where car IS right now (can teleport from noise)
-        # max_waypoint_idx = last *accepted* wp — advances at most +1 per step
-        # This means: even if noise jumps 20wps, we only reward after
-        # 20 consecutive forward steps — sustained progress, not one-off noise.
+        # A. Waypoint — sequential gating with FPS tolerance
+        # max_waypoint_idx advances by exactly +1 per step (jitter-proof)
+        # but allows fwd_dist <= 2 to handle genuine 20fps waypoint skips.
+        # For noise jumps (fwd_dist > 2): advance max_wp anyway (by 1) so it
+        # never permanently freezes behind a single noise event.
         current_wp = int(current_progress * self.NUM_WAYPOINTS) % self.NUM_WAYPOINTS
         r_progress = 0.0
         if self.max_waypoint_idx == -1:
             self.max_waypoint_idx = current_wp
             self._start_waypoint = current_wp
+            self._last_wp_step = self.current_step
         else:
             fwd_dist = (current_wp - self.max_waypoint_idx) % self.NUM_WAYPOINTS
-            # Only accept exactly +1 step: noise teleports many waypoints but
-            # won't be rewarded until the car catches up sequentially.
-            if fwd_dist == 1:
-                r_progress = 30.0
-                self.max_waypoint_idx = current_wp
-            elif 1 < fwd_dist <= self.NUM_WAYPOINTS // 2:
-                # Car is AHEAD of accepted idx — don't reward yet,
-                # don't update max_wp either (wait for sequential catchup).
-                # This handles genuine fast corners: next step fwd_dist will
-                # be the same or +1 and will tick through sequentially.
-                pass
-            # fwd_dist > half = backward / noise wrap, ignore
+            if 0 < fwd_dist <= self.NUM_WAYPOINTS // 2:  # forward motion
+                if fwd_dist <= 2:  # genuine advancement (1-2 wps = normal at 20fps)
+                    r_progress = 30.0
+                    self._last_wp_step = self.current_step
+                # Always advance by 1 regardless (prevents permanent freeze)
+                self.max_waypoint_idx = (self.max_waypoint_idx + 1) % self.NUM_WAYPOINTS
+            # fwd_dist > half = backward, ignore
         progress_delta = current_progress - self.prev_progress
         if progress_delta < -0.5:  # Lap wraparound
             progress_delta = (1.0 - self.prev_progress) + current_progress
@@ -215,14 +211,21 @@ class GranTurismoEnv(gym.Env):
 
         if not terminated:
             if self.stuck_frames > (self.STUCK_TOLERANCE * 25):
-                reward += -500.0
+                reward += -100.0  # was -500: one stuck event shouldn't wipe 70% of lap reward
                 terminated = True
                 reason = "STUCK"
 
             if self.loiter_frames > (self.LOITER_TOLERANCE * 25):
-                reward += -500.0
+                reward += -100.0  # was -500
                 terminated = True
                 reason = "LOITERING"
+
+            # Stagnation: no waypoint progress for 60s → pointless episode, kill it
+            steps_since_wp = self.current_step - getattr(self, '_last_wp_step', 0)
+            if not in_grace and steps_since_wp > int(60 * fps):
+                reward += -200.0
+                terminated = True
+                reason = "STAGNATION"
 
             # Wrong direction: negative progress for too long
             if progress_delta < -0.001 and not in_grace:
@@ -410,6 +413,7 @@ class GranTurismoEnv(gym.Env):
         self.last_step_time = time.time()
         self.progress_buffer.clear()
         self.max_waypoint_idx = -1
+        self._last_wp_step = 0
         self.steer_history = deque([0.0, 0.0, 0.0], maxlen=3)
         self.gas_history = deque([0.0, 0.0, 0.0], maxlen=3)
 
