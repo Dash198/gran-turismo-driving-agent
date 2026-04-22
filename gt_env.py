@@ -68,13 +68,19 @@ class GranTurismoEnv(gym.Env):
         # Dashboard
         self.render_interval = 5
 
-        # Termination thresholds (seconds)
-        self.GRACE_PERIOD = 10.0
-        self.STUCK_TOLERANCE = 12.0    # Give agent time to recover
-        self.LOITER_TOLERANCE = 15.0   # Only kill true standstills
-        self.WRONG_DIR_TOLERANCE = 5.0
-        self.PROGRESS_GATE_TIME = 15.0  # Was 30s — agent was dying net-positive before gate fired
-        self.PROGRESS_GATE_MIN = 0.03   # Minimum progress delta required
+        # Termination thresholds — fixed step counts (assume 20fps baseline)
+        # Using instantaneous fps caused thresholds to shrink on slow steps
+        self.GRACE_PERIOD = 10.0       # seconds
+        self.STUCK_TOLERANCE = 12.0    # seconds
+        self.LOITER_TOLERANCE = 15.0   # seconds
+        self.WRONG_DIR_TOLERANCE = 5.0 # seconds
+        self.FPS_BASELINE = 20         # steps/sec assumed for threshold calculation
+        # Pre-computed step counts
+        self.GRACE_STEPS      = int(self.GRACE_PERIOD       * self.FPS_BASELINE)  # 200
+        self.STUCK_STEPS      = int(self.STUCK_TOLERANCE    * self.FPS_BASELINE)  # 240
+        self.LOITER_STEPS     = int(self.LOITER_TOLERANCE   * self.FPS_BASELINE)  # 300
+        self.WRONG_DIR_STEPS  = int(self.WRONG_DIR_TOLERANCE* self.FPS_BASELINE)  # 100
+        self.STAGNATION_STEPS = int(60.0 * self.FPS_BASELINE)                     # 1200
 
     def _print_episode_stats(self, reason):
         print("\n" + "=" * 45)
@@ -92,6 +98,11 @@ class GranTurismoEnv(gym.Env):
         self.last_step_time = now
         dt = np.clip(dt, 1.0 / 60.0, 1.0)
         fps = 1.0 / dt
+        # Smoothed fps for display only (not used for threshold calculations)
+        if not hasattr(self, '_fps_smooth'):
+            self._fps_smooth = fps
+        self._fps_smooth = 0.95 * self._fps_smooth + 0.05 * fps
+        fps_display = self._fps_smooth
 
         self.current_step += 1
 
@@ -184,7 +195,7 @@ class GranTurismoEnv(gym.Env):
         # 7. TERMINATIONS
         terminated = False
         reason = ""
-        in_grace = self.current_step < int(self.GRACE_PERIOD * fps)
+        in_grace = self.current_step < self.GRACE_STEPS
 
         # OCR speed + lap check (every 30 steps — OCR only for lap detection + display)
         if self.current_step % 30 == 0:
@@ -210,19 +221,19 @@ class GranTurismoEnv(gym.Env):
             self.loiter_frames = 0
 
         if not terminated:
-            if self.stuck_frames > (self.STUCK_TOLERANCE * 25):
-                reward += -100.0  # was -500: one stuck event shouldn't wipe 70% of lap reward
+            if self.stuck_frames > self.STUCK_STEPS:
+                reward += -100.0
                 terminated = True
                 reason = "STUCK"
 
-            if self.loiter_frames > (self.LOITER_TOLERANCE * 25):
-                reward += -100.0  # was -500
+            if self.loiter_frames > self.LOITER_STEPS:
+                reward += -100.0
                 terminated = True
                 reason = "LOITERING"
 
-            # Stagnation: no waypoint progress for 60s → pointless episode, kill it
+            # Stagnation: no waypoint progress in 60s worth of steps
             steps_since_wp = self.current_step - getattr(self, '_last_wp_step', 0)
-            if not in_grace and steps_since_wp > int(60 * fps):
+            if not in_grace and steps_since_wp > self.STAGNATION_STEPS:
                 reward += -200.0
                 terminated = True
                 reason = "STAGNATION"
@@ -230,7 +241,7 @@ class GranTurismoEnv(gym.Env):
             # Wrong direction: negative progress for too long
             if progress_delta < -0.001 and not in_grace:
                 self.wrong_dir_frames += 1
-                if self.wrong_dir_frames > (self.WRONG_DIR_TOLERANCE * 25):
+                if self.wrong_dir_frames > self.WRONG_DIR_STEPS:
                     reward += -300.0
                     terminated = True
                     reason = "WRONG DIRECTION"
@@ -255,18 +266,18 @@ class GranTurismoEnv(gym.Env):
                 l_pos=line_pos,
                 rew=reward,
                 action=action,
-                fps=fps,
+                fps=fps_display,
                 crash=is_collision,
                 r_prog=r_progress,
                 r_time=r_time,
                 r_steer=r_steer,
                 displacement=displacement,
                 s_frames=self.stuck_frames,
-                s_max=int(self.STUCK_TOLERANCE * 25),
+                s_max=self.STUCK_STEPS,
                 l_frames=self.loiter_frames,
-                l_max=int(self.LOITER_TOLERANCE * 25),
+                l_max=self.LOITER_STEPS,
                 w_frames=self.wrong_dir_frames,
-                w_max=int(self.WRONG_DIR_TOLERANCE * 25),
+                w_max=self.WRONG_DIR_STEPS,
                 has_line=(line_pos is not None),
             )
 
