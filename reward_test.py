@@ -124,18 +124,33 @@ while True:
             lap_flash      = 30   # flash 30 frames
             print(f"\n🏁 LAP DETECTED! Lap #{laps_detected} — +1000 reward!\n")
 
-        # Log every OCR read for diagnostics
-        y, x, h, w = vision.LAP_ROI
-        if h > 0 and w > 0:
-            roi  = raw[y:y+h, x:x+w]
-            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-            _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-            import pytesseract
-            raw_ocr = pytesseract.image_to_string(
-                thresh, config="--psm 10 -c tessedit_char_whitelist=123"
-            ).strip()
-            last_ocr_lap = raw_ocr if raw_ocr else "?"
-            ocr_log.appendleft(f"s{step}: '{raw_ocr}' spd={spd}")
+        # Log OCR attempts at each poll (every 30 steps)
+        if step % 30 == 0:
+            y0, x0, h0, w0 = vision.LAP_ROI
+            if h0 > 0 and w0 > 0:
+                gray_d = cv2.cvtColor(raw[y0:y0+h0, x0:x0+w0], cv2.COLOR_BGR2GRAY)
+                found = "?"
+                for tv in [200, 160, 128]:
+                    _, thr = cv2.threshold(gray_d, tv, 255, cv2.THRESH_BINARY)
+                    big = cv2.resize(thr, (w0*4, h0*4), interpolation=cv2.INTER_NEAREST)
+                    big = cv2.copyMakeBorder(big, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=0)
+                    import pytesseract
+                    for psm in [7, 10]:
+                        t = pytesseract.image_to_string(
+                            big, config=f"--psm {psm} -c tessedit_char_whitelist=123"
+                        ).strip()
+                        try:
+                            val = int(t)
+                            if val in (1, 2, 3):
+                                found = f"'{t}' t={tv} psm={psm}"
+                                break
+                        except ValueError:
+                            pass
+                    if found != "?":
+                        break
+                last_ocr_lap = found
+                ocr_log.appendleft(f"s{step}: {found}")
+
 
     if lap_flash > 0:
         lap_flash -= 1

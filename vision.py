@@ -183,24 +183,39 @@ class VisionInterface:
         y, x, h, w = self.LAP_ROI
         if h == 0 or w == 0:
             return False
-        if current_step < 300:  # Fixed: was 15*fps (buggy), now hardcoded 300 steps (~15s at 20fps)
+        if current_step < 300:  # Fixed: was 15*fps (buggy)
             return False
-        if speed is None or speed < 10.0:
-            return False
+        # NOTE: speed gate removed — speed OCR often fails, shouldn't block lap detection
 
         lap_roi = frame[y:y+h, x:x+w]
         gray = cv2.cvtColor(lap_roi, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-        config = "--psm 10 -c tessedit_char_whitelist=123"
-        text = pytesseract.image_to_string(thresh, config=config).strip()
-        try:
-            current_lap = int(text)
-        except ValueError:
-            self.lap_read_history = []  # Clear on bad read — prevents stale sequence triggering
+
+        # Try multiple thresholds — lap counter brightness varies by track
+        current_lap = None
+        for thresh_val in [200, 160, 128]:
+            _, thresh = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY)
+            big = cv2.resize(thresh, (w * 4, h * 4), interpolation=cv2.INTER_NEAREST)
+            big = cv2.copyMakeBorder(big, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=0)
+            # Try psm 7 (single line) first, then psm 10 (single char)
+            for psm in [7, 10]:
+                config = f"--psm {psm} -c tessedit_char_whitelist=123"
+                text = pytesseract.image_to_string(big, config=config).strip()
+                try:
+                    val = int(text)
+                    if val in (1, 2, 3):  # Only valid lap numbers
+                        current_lap = val
+                        break
+                except ValueError:
+                    pass
+            if current_lap is not None:
+                break
+
+        if current_lap is None:
+            self.lap_read_history = []  # Clear on bad read
             return False
 
         self.lap_read_history.append((current_step, current_lap))
-        # Only keep reads within the last 90 steps (~3 OCR calls at every-30-step polling)
+        # Only keep reads within the last 90 steps (~3 OCR calls)
         self.lap_read_history = [(s, l) for s, l in self.lap_read_history if current_step - s <= 90]
 
         laps_in_window = [l for s, l in self.lap_read_history]
