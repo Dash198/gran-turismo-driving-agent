@@ -221,8 +221,9 @@ class VisionInterface:
         laps_in_window = [l for s, l in self.lap_read_history]
         if (len(laps_in_window) >= 3
                 and all(l == current_lap for l in laps_in_window[-3:])
-                and current_lap == self.last_detected_lap + 1):
-            print(f"🏁 VALID LAP CHANGE: {self.last_detected_lap} -> {current_lap}")
+                and current_lap != 1   # "1" = still on lap 1, anything else = completed
+                and self.last_detected_lap == 1):  # Only fire once per episode
+            print(f"🏁 LAP COMPLETE detected! OCR reads '{current_lap}' (expected 2, misreads ok)")
             self.last_detected_lap = current_lap
             self.lap_read_history = []
             return True
