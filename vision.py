@@ -183,7 +183,7 @@ class VisionInterface:
         y, x, h, w = self.LAP_ROI
         if h == 0 or w == 0:
             return False
-        if current_step < (15.0 * fps):
+        if current_step < 300:  # Fixed: was 15*fps (buggy), now hardcoded 300 steps (~15s at 20fps)
             return False
         if speed is None or speed < 10.0:
             return False
@@ -196,18 +196,21 @@ class VisionInterface:
         try:
             current_lap = int(text)
         except ValueError:
+            self.lap_read_history = []  # Clear on bad read — prevents stale sequence triggering
             return False
 
-        self.lap_read_history.append(current_lap)
-        self.lap_read_history = self.lap_read_history[-5:]
-        if len(self.lap_read_history) >= 3:
-            last_three = self.lap_read_history[-3:]
-            if (last_three[0] == last_three[1] == last_three[2] == current_lap
-                    and current_lap == self.last_detected_lap + 1):
-                print(f"🏁 VALID LAP CHANGE: {self.last_detected_lap} -> {current_lap}")
-                self.last_detected_lap = current_lap
-                self.lap_read_history = []
-                return True
+        self.lap_read_history.append((current_step, current_lap))
+        # Only keep reads within the last 90 steps (~3 OCR calls at every-30-step polling)
+        self.lap_read_history = [(s, l) for s, l in self.lap_read_history if current_step - s <= 90]
+
+        laps_in_window = [l for s, l in self.lap_read_history]
+        if (len(laps_in_window) >= 3
+                and all(l == current_lap for l in laps_in_window[-3:])
+                and current_lap == self.last_detected_lap + 1):
+            print(f"🏁 VALID LAP CHANGE: {self.last_detected_lap} -> {current_lap}")
+            self.last_detected_lap = current_lap
+            self.lap_read_history = []
+            return True
         return False
 
     def get_map_position(self, frame):
