@@ -11,7 +11,7 @@ from vision import VisionInterface
 vision = VisionInterface()
 
 # ── State ──
-NUM_WP        = 50
+NUM_WP        = 451
 FPS_BASELINE  = 20
 GRACE_STEPS   = 10 * FPS_BASELINE   # 200
 STUCK_STEPS   = 12 * FPS_BASELINE   # 240
@@ -77,16 +77,18 @@ while True:
     else:
         fd = (cwp - max_wp) % NUM_WP
         if 0 < fd <= NUM_WP // 2:
-            if fd <= 2:
-                r_prog = 30.0
-                wp_count += 1
+            if fd <= 15:
+                r_prog = 3.3 * fd
+                wp_count += fd
                 last_wp_step = step
-                print(f"  ✅ WP +1! wp={cwp}, crossed={wp_count}, reward=+30")
-            max_wp = (max_wp + 1) % NUM_WP
+                max_wp = cwp
+                print(f"  ✅ WP +{fd}! wp={cwp}, crossed={wp_count}, reward=+{r_prog:.1f}")
+            else:
+                max_wp = (max_wp + 1) % NUM_WP
     prev_progress = cp
 
     # ── Rewards ──
-    r_time  = -0.1
+    r_time  = -0.02
     r_steer = 0.0
     rew     = r_prog + r_time + r_steer
     total_reward += rew

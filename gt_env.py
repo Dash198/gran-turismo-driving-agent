@@ -48,8 +48,8 @@ class GranTurismoEnv(gym.Env):
         self.pos_buffer = deque(maxlen=30)
         self.progress_buffer = deque(maxlen=5)
 
-        # Waypoint system — discrete one-shot rewards (jitter-proof)
-        self.NUM_WAYPOINTS = 50
+        # Waypoint system — using dense 451-point track path
+        self.NUM_WAYPOINTS = 451
         self.max_waypoint_idx = -1
         self._start_waypoint = 0
 
@@ -158,11 +158,7 @@ class GranTurismoEnv(gym.Env):
         # 6. REWARD — waypoint + time penalty
         # ═══════════════════════════════════
 
-        # A. Waypoint — sequential gating with FPS tolerance
-        # max_waypoint_idx advances by exactly +1 per step (jitter-proof)
-        # but allows fwd_dist <= 2 to handle genuine 20fps waypoint skips.
-        # For noise jumps (fwd_dist > 2): advance max_wp anyway (by 1) so it
-        # never permanently freezes behind a single noise event.
+        # A. Waypoint — dense gating for 451 points
         current_wp = int(current_progress * self.NUM_WAYPOINTS) % self.NUM_WAYPOINTS
         r_progress = 0.0
         if self.max_waypoint_idx == -1:
@@ -172,19 +168,21 @@ class GranTurismoEnv(gym.Env):
         else:
             fwd_dist = (current_wp - self.max_waypoint_idx) % self.NUM_WAYPOINTS
             if 0 < fwd_dist <= self.NUM_WAYPOINTS // 2:  # forward motion
-                if fwd_dist <= 2:  # genuine advancement (1-2 wps = normal at 20fps)
-                    r_progress = 30.0
+                if fwd_dist <= 15:  # genuine advancement (up to ~3% of track per step)
+                    r_progress = 3.3 * fwd_dist
                     self._last_wp_step = self.current_step
-                # Always advance by 1 regardless (prevents permanent freeze)
-                self.max_waypoint_idx = (self.max_waypoint_idx + 1) % self.NUM_WAYPOINTS
+                    self.max_waypoint_idx = current_wp  # instantly catch up
+                else:
+                    # Noise jump: slowly crawl forward to try and catch up safely
+                    self.max_waypoint_idx = (self.max_waypoint_idx + 1) % self.NUM_WAYPOINTS
             # fwd_dist > half = backward, ignore
         progress_delta = current_progress - self.prev_progress
         if progress_delta < -0.5:  # Lap wraparound
             progress_delta = (1.0 - self.prev_progress) + current_progress
         self.prev_progress = current_progress
 
-        # B. Time penalty — constant -0.1/step
-        r_time = -0.1
+        # B. Time penalty — small nudge to finish fast (was -0.1, which punished long clean laps)
+        r_time = -0.02
 
         # C. Steering change penalty
         steer_delta = abs(steer - self.steer_history[-2])

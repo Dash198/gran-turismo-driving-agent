@@ -28,13 +28,13 @@ class VisionInterface:
 
         # Load calibrated track path (if exists)
         import os
-        wp_path = os.path.join(os.path.dirname(__file__), 'track_waypoints.npy')
+        wp_path = os.path.join(os.path.dirname(__file__), 'track_path.npy')
         if os.path.exists(wp_path):
             self.track_waypoints = np.load(wp_path)
-            print(f"\u2705 Loaded {len(self.track_waypoints)} track waypoints")
+            print(f"✅ Loaded {len(self.track_waypoints)} track waypoints")
         else:
             self.track_waypoints = None
-            print("\u26a0\ufe0f  No track_waypoints.npy — using polar angle fallback")
+            print("⚠️  No track_path.npy — using polar angle fallback")
 
         # ── COLOR TUNING ──
         # Blue racing line
