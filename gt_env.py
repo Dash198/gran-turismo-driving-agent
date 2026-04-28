@@ -37,7 +37,7 @@ class GranTurismoEnv(gym.Env):
         self.current_step = 0
         self.stuck_frames = 0
         self.loiter_frames = 0
-        self.wrong_dir_frames = 0
+        self.wrong_dir_frames = 0  # kept for dashboard compat but no longer terminates
         self.episode_reward = 0.0
         self.current_speed = 0
         self.prev_progress = 0.0
@@ -68,19 +68,14 @@ class GranTurismoEnv(gym.Env):
         # Dashboard
         self.render_interval = 5
 
-        # Termination thresholds — fixed step counts (assume 20fps baseline)
-        # Using instantaneous fps caused thresholds to shrink on slow steps
-        self.GRACE_PERIOD = 10.0       # seconds
-        self.STUCK_TOLERANCE = 12.0    # seconds
-        self.LOITER_TOLERANCE = 15.0   # seconds
-        self.WRONG_DIR_TOLERANCE = 5.0 # seconds
-        self.FPS_BASELINE = 20         # steps/sec assumed for threshold calculation
-        # Pre-computed step counts
-        self.GRACE_STEPS      = int(self.GRACE_PERIOD       * self.FPS_BASELINE)  # 200
-        self.STUCK_STEPS      = int(self.STUCK_TOLERANCE    * self.FPS_BASELINE)  # 240
-        self.LOITER_STEPS     = int(self.LOITER_TOLERANCE   * self.FPS_BASELINE)  # 300
-        self.WRONG_DIR_STEPS  = int(self.WRONG_DIR_TOLERANCE* self.FPS_BASELINE)  # 100
-        self.STAGNATION_STEPS = int(60.0 * self.FPS_BASELINE)                     # 1200
+        # Termination thresholds — fixed step counts at 20fps baseline
+        # Tuned to match gamma=0.99 horizon (~100 steps) so agent can see its own death
+        self.FPS_BASELINE    = 20
+        self.GRACE_STEPS     = int(10.0 * self.FPS_BASELINE)   # 200  — no termination during start
+        self.STUCK_STEPS     = int(4.0  * self.FPS_BASELINE)   # 80   — was 240, wall vibration killed this
+        self.LOITER_STEPS    = int(5.0  * self.FPS_BASELINE)   # 100  — same as stagnation, belt+suspenders
+        self.STAGNATION_STEPS = int(5.0 * self.FPS_BASELINE)   # 100  — was 1200! now within gamma horizon
+        # WRONG_DIRECTION removed — punished recovery attempts, taught agent to stay at walls
 
     def _print_episode_stats(self, reason):
         print("\n" + "=" * 45)
@@ -206,45 +201,39 @@ class GranTurismoEnv(gym.Env):
                 reason = "LAP COMPLETED"
                 self._update_curriculum(lap_completed=True)
 
-        # Stuck/Loiter — displacement safety net (imperfect, but reward math does the real work)
+        # Stuck/Loiter detection — only count frames where minimap tracking is LIVE
+        # (displacement from stale buffer positions would give false non-zero readings)
         if not in_grace:
-            if displacement < 1.0:
+            if current_pos is not None and displacement < 5.0:  # 5px threshold: vibration < 5px
                 self.stuck_frames += 1
                 self.loiter_frames += 1
-            else:
+            elif current_pos is not None:  # actively moving
                 self.stuck_frames = 0
                 self.loiter_frames = 0
+            # If current_pos is None: minimap lost, don't reset counter (car might be stuck off-map)
         else:
             self.stuck_frames = 0
             self.loiter_frames = 0
 
+        steps_since_wp = self.current_step - getattr(self, '_last_wp_step', 0)
         if not terminated:
             if self.stuck_frames > self.STUCK_STEPS:
-                reward += -100.0
+                reward += -50.0
                 terminated = True
                 reason = "STUCK"
 
-            if self.loiter_frames > self.LOITER_STEPS:
-                reward += -100.0
+            elif self.loiter_frames > self.LOITER_STEPS:
+                reward += -50.0
                 terminated = True
                 reason = "LOITERING"
 
-            # Stagnation: no waypoint progress in 60s worth of steps
-            steps_since_wp = self.current_step - getattr(self, '_last_wp_step', 0)
-            if not in_grace and steps_since_wp > self.STAGNATION_STEPS:
-                reward += -200.0
+            # Stagnation: no waypoint progress — 100 steps (5s), within gamma=0.99 horizon
+            elif not in_grace and steps_since_wp > self.STAGNATION_STEPS:
+                reward += -50.0
                 terminated = True
                 reason = "STAGNATION"
-
-            # Wrong direction: negative progress for too long
-            if progress_delta < -0.001 and not in_grace:
-                self.wrong_dir_frames += 1
-                if self.wrong_dir_frames > self.WRONG_DIR_STEPS:
-                    reward += -300.0
-                    terminated = True
-                    reason = "WRONG DIRECTION"
-            else:
-                self.wrong_dir_frames = 0
+            # WRONG_DIRECTION removed: recovery requires reversing (negative progress).
+            # With 451 waypoints + 5s stagnation, wrong-way agents die naturally.
 
 
             # Max steps
