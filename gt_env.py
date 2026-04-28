@@ -263,8 +263,8 @@ class GranTurismoEnv(gym.Env):
                 s_max=self.STUCK_STEPS,
                 l_frames=self.loiter_frames,
                 l_max=self.LOITER_STEPS,
-                w_frames=self.wrong_dir_frames,
-                w_max=self.WRONG_DIR_STEPS,
+                stag_frames=steps_since_wp,
+                stag_max=self.STAGNATION_STEPS,
                 has_line=(line_pos is not None),
             )
 
@@ -295,7 +295,7 @@ class GranTurismoEnv(gym.Env):
     def _render_dashboard(
         self, obs_frame, l_pos, rew, action, fps, crash,
         r_prog, r_time, r_steer, displacement,
-        s_frames, s_max, l_frames, l_max, w_frames, w_max, has_line,
+        s_frames, s_max, l_frames, l_max, stag_frames, stag_max, has_line,
     ):
         try:
             W, H = 480, 380
@@ -363,9 +363,9 @@ class GranTurismoEnv(gym.Env):
             cv2.putText(db, "TIMERS", (10, ty), f, 0.33, CYAN, 1)
             bar_w = 140
             for i, (name, frames, limit, color) in enumerate([
-                ("STUCK", s_frames, s_max, (0, 165, 255)),
-                ("LOITER", l_frames, l_max, (0, 255, 255)),
-                ("WRONG", w_frames, w_max, (0, 0, 255)),
+                ("STUCK",  s_frames,    s_max,    (0, 165, 255)),
+                ("LOITER", l_frames,    l_max,    (0, 255, 255)),
+                ("STAG",   stag_frames, stag_max, (180, 0, 180)),
             ]):
                 y = ty + 14 + i * 18
                 cv2.putText(db, name, (10, y + 3), f, 0.26, DIM, 1)
