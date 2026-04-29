@@ -35,9 +35,6 @@ class GranTurismoEnv(gym.Env):
         # Episode state
         self.max_steps = 5000  # ~3min at 27 FPS (lap takes ~2min)
         self.current_step = 0
-        self.stuck_frames = 0
-        self.loiter_frames = 0
-        self.wrong_dir_frames = 0  # kept for dashboard compat but no longer terminates
         self.episode_reward = 0.0
         self.current_speed = 0
         self.prev_progress = 0.0
@@ -73,8 +70,6 @@ class GranTurismoEnv(gym.Env):
         # Stagnation at 300 = 15s: within 0.99^300=0.05 gamma horizon, but enough for corners
         self.FPS_BASELINE     = 20
         self.GRACE_STEPS      = int(10.0 * self.FPS_BASELINE)   # 200  — no kills during start
-        self.STUCK_STEPS      = int(6.0  * self.FPS_BASELINE)   # 120  — was 80, too tight for corner tracking
-        self.LOITER_STEPS     = int(7.0  * self.FPS_BASELINE)   # 140  — slightly above stuck
         self.STAGNATION_STEPS = int(15.0 * self.FPS_BASELINE)   # 300  — was 100, minimap noise killed corners
         # WRONG_DIRECTION removed — punished recovery attempts, taught agent to stay at walls
 
@@ -202,39 +197,14 @@ class GranTurismoEnv(gym.Env):
                 reason = "LAP COMPLETED"
                 self._update_curriculum(lap_completed=True)
 
-        # Stuck/Loiter detection — only count frames where minimap tracking is LIVE
-        # (displacement from stale buffer positions would give false non-zero readings)
-        if not in_grace:
-            if current_pos is not None and displacement < 5.0:  # 5px threshold: vibration < 5px
-                self.stuck_frames += 1
-                self.loiter_frames += 1
-            elif current_pos is not None:  # actively moving
-                self.stuck_frames = 0
-                self.loiter_frames = 0
-            # If current_pos is None: minimap lost, don't reset counter (car might be stuck off-map)
-        else:
-            self.stuck_frames = 0
-            self.loiter_frames = 0
-
+        # Stagnation: only termination — covers stuck, loiter, wrong-dir all in one
+        # STUCK/LOITER removed: were redundant with stagnation and misfired on corners
         steps_since_wp = self.current_step - getattr(self, '_last_wp_step', 0)
         if not terminated:
-            if self.stuck_frames > self.STUCK_STEPS:
-                reward += -50.0
-                terminated = True
-                reason = "STUCK"
-
-            elif self.loiter_frames > self.LOITER_STEPS:
-                reward += -50.0
-                terminated = True
-                reason = "LOITERING"
-
-            # Stagnation: no waypoint progress — 100 steps (5s), within gamma=0.99 horizon
-            elif not in_grace and steps_since_wp > self.STAGNATION_STEPS:
+            if not in_grace and steps_since_wp > self.STAGNATION_STEPS:
                 reward += -50.0
                 terminated = True
                 reason = "STAGNATION"
-            # WRONG_DIRECTION removed: recovery requires reversing (negative progress).
-            # With 451 waypoints + 5s stagnation, wrong-way agents die naturally.
 
 
             # Max steps
@@ -260,10 +230,6 @@ class GranTurismoEnv(gym.Env):
                 r_time=r_time,
                 r_steer=r_steer,
                 displacement=displacement,
-                s_frames=self.stuck_frames,
-                s_max=self.STUCK_STEPS,
-                l_frames=self.loiter_frames,
-                l_max=self.LOITER_STEPS,
                 stag_frames=steps_since_wp,
                 stag_max=self.STAGNATION_STEPS,
                 has_line=(line_pos is not None),
@@ -296,7 +262,7 @@ class GranTurismoEnv(gym.Env):
     def _render_dashboard(
         self, obs_frame, l_pos, rew, action, fps, crash,
         r_prog, r_time, r_steer, displacement,
-        s_frames, s_max, l_frames, l_max, stag_frames, stag_max, has_line,
+        stag_frames, stag_max, has_line,
     ):
         try:
             W, H = 480, 380
@@ -364,9 +330,7 @@ class GranTurismoEnv(gym.Env):
             cv2.putText(db, "TIMERS", (10, ty), f, 0.33, CYAN, 1)
             bar_w = 140
             for i, (name, frames, limit, color) in enumerate([
-                ("STUCK",  s_frames,    s_max,    (0, 165, 255)),
-                ("LOITER", l_frames,    l_max,    (0, 255, 255)),
-                ("STAG",   stag_frames, stag_max, (180, 0, 180)),
+                ("STAG", stag_frames, stag_max, (180, 0, 180)),
             ]):
                 y = ty + 14 + i * 18
                 cv2.putText(db, name, (10, y + 3), f, 0.26, DIM, 1)
@@ -399,9 +363,6 @@ class GranTurismoEnv(gym.Env):
         time.sleep(1.5)
 
         self.current_step = 0
-        self.stuck_frames = 0
-        self.loiter_frames = 0
-        self.wrong_dir_frames = 0
         self.episode_reward = 0.0
         self._gate_fired = False
         self.pos_buffer.clear()
