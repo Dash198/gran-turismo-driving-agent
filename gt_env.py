@@ -69,12 +69,13 @@ class GranTurismoEnv(gym.Env):
         self.render_interval = 5
 
         # Termination thresholds — fixed step counts at 20fps baseline
-        # Tuned to match gamma=0.99 horizon (~100 steps) so agent can see its own death
-        self.FPS_BASELINE    = 20
-        self.GRACE_STEPS     = int(10.0 * self.FPS_BASELINE)   # 200  — no termination during start
-        self.STUCK_STEPS     = int(4.0  * self.FPS_BASELINE)   # 80   — was 240, wall vibration killed this
-        self.LOITER_STEPS    = int(5.0  * self.FPS_BASELINE)   # 100  — same as stagnation, belt+suspenders
-        self.STAGNATION_STEPS = int(5.0 * self.FPS_BASELINE)   # 100  — was 1200! now within gamma horizon
+        # Loosened from v1 (1200/240) but tighter than original broken values
+        # Stagnation at 300 = 15s: within 0.99^300=0.05 gamma horizon, but enough for corners
+        self.FPS_BASELINE     = 20
+        self.GRACE_STEPS      = int(10.0 * self.FPS_BASELINE)   # 200  — no kills during start
+        self.STUCK_STEPS      = int(6.0  * self.FPS_BASELINE)   # 120  — was 80, too tight for corner tracking
+        self.LOITER_STEPS     = int(7.0  * self.FPS_BASELINE)   # 140  — slightly above stuck
+        self.STAGNATION_STEPS = int(15.0 * self.FPS_BASELINE)   # 300  — was 100, minimap noise killed corners
         # WRONG_DIRECTION removed — punished recovery attempts, taught agent to stay at walls
 
     def _print_episode_stats(self, reason):
