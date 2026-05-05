@@ -1,5 +1,43 @@
-iso
-.venv
-NitroGen_Repo
-logs
-models
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Training artefacts (large, machine-specific)
+logs/
+models/
+*.zip
+*.pkl
+
+# Jupyter
+*.ipynb
+.ipynb_checkpoints/
+
+# Debug / scratch outputs
+*.png
+*.pdf
+*.npy.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific scratch
+iso/
+NitroGen_Repo/
+PLANS.md
