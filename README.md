@@ -1,17 +1,17 @@
 # Gran Turismo Driving Agent 🏎️
 
-A **reinforcement learning agent** that learns to drive a full lap in Gran Turismo using only raw visual input from a capture card — no game API, no telemetry, no modding. Pure computer vision + SAC.
+A **reinforcement learning agent** that learns to drive a full lap in Gran Turismo using only raw visual input — no game API, no telemetry, no modding. Pure computer vision + SAC.
 
-> Runs on Linux/Wayland. Tested on GT7 (PS5 via HDMI capture).
+> Runs on Linux/Wayland. Uses **Gran Turismo (PSP)** running inside **PPSSPP**, with the emulator's display piped to a v4l2loopback virtual camera device.
 
 ---
 
 ## How It Works
 
-The agent perceives the game through a USB capture card and controls the PS5 via a virtual controller (evdev). No game internals are accessed.
+The agent perceives the game through a v4l2loopback virtual camera fed by PPSSPP and controls the emulator via a virtual controller (evdev/uinput). No game internals are accessed.
 
 ```
-PS5 (GT7) ──HDMI──► Capture Card ──USB──► Linux PC
+PPSSPP (GT PSP) ──v4l2loopback──► /dev/video2 ──► Linux PC
                                               │
                                     ┌─────────▼─────────┐
                                     │   vision.py        │
@@ -90,9 +90,11 @@ gran-turismo-driving-agent/
 ### Requirements
 
 - Linux with **uinput** support (`sudo modprobe uinput`)
+- **PPSSPP** emulator (any recent build with display output)
+- **v4l2loopback** kernel module to create a virtual camera from PPSSPP's window
 - **Tesseract OCR** (`sudo pacman -S tesseract` or `sudo apt install tesseract-ocr`)
-- A USB/PCIe HDMI **capture card** (tested on `/dev/video2`, `/dev/video10`)
-- GT7 running on PS5 with the **Racing Line** assist turned on (the blue line is the primary observation)
+- Gran Turismo (PSP) ROM
+- The **Racing Line** assist turned on in-game (the blue line is the primary observation)
 
 ### Install
 
@@ -109,7 +111,21 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Calibrate the Track (one-time)
+### Virtual Camera Setup (v4l2loopback)
+
+The agent reads the game from `/dev/video2`. Set this up before launching PPSSPP:
+
+```bash
+# Load the virtual camera module
+sudo modprobe v4l2loopback video_nr=2 card_label="GT_Cam" exclusive_caps=1
+```
+
+Then in PPSSPP, enable display output to the v4l2loopback device (or use any screen-capture-to-v4l2 tool like `ffmpeg` or `obs-v4l2sink`).
+
+Verify the camera is visible:
+```bash
+v4l2-ctl --list-devices
+```
 
 The agent uses a 451-point minimap path to track lap progress. A pre-calibrated `track_path.npy` is included for the default track. To calibrate a new track:
 
