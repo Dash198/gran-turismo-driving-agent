@@ -1,8 +1,8 @@
-# Gran Turismo Driving Agent 🏎️
+# Gran Turismo Driving Agent
 
 A **reinforcement learning agent** that learns to drive a full lap in Gran Turismo using only raw visual input — no game API, no telemetry, no modding. Pure computer vision + SAC.
 
-> Runs on Linux/Wayland. Uses **Gran Turismo 4 (emulator: PPSSPP)**.
+> Runs on Linux/Wayland. Uses **Gran Turismo (emulator: PPSSPP)**.
 
 ---
 
