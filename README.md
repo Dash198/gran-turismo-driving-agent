@@ -2,7 +2,7 @@
 
 A **reinforcement learning agent** that learns to drive a full lap in Gran Turismo using only raw visual input — no game API, no telemetry, no modding. Pure computer vision + SAC.
 
-> Runs on Linux/Wayland. Uses **Gran Turismo (PSP)** running inside **PPSSPP**, with the emulator's display piped to a v4l2loopback virtual camera device.
+> Runs on Linux/Wayland. Uses **Gran Turismo 4 (emulator: PPSSPP)**.
 
 ---
 
@@ -12,21 +12,21 @@ The agent perceives the game through a v4l2loopback virtual camera fed by PPSSPP
 
 ```
 PPSSPP (GT PSP) ──v4l2loopback──► /dev/video2 ──► Linux PC
-                                              │
-                                    ┌─────────▼─────────┐
-                                    │   vision.py        │
-                                    │  (OpenCV pipeline) │
-                                    └─────────┬─────────┘
-                                              │ obs (64×64 masks + aux)
-                                    ┌─────────▼─────────┐
-                                    │   SAC Agent        │
-                                    │ (stable-baselines3)│
-                                    └─────────┬─────────┘
-                                              │ action (steer, gas/brake)
-                                    ┌─────────▼─────────┐
-                                    │ virtual_controller │
-                                    │    (evdev/uinput)  │
-                                    └───────────────────┘
+                                                      │
+                                            ┌─────────▼─────────┐
+                                            │   vision.py        │
+                                            │  (OpenCV pipeline) │
+                                            └─────────┬─────────┘
+                                                      │ obs (64×64 masks + aux)
+                                            ┌─────────▼─────────┐
+                                            │   SAC Agent        │
+                                            │ (stable-baselines3)│
+                                            └─────────┬─────────┘
+                                                      │ action (steer, gas/brake)
+                                            ┌─────────▼─────────┐
+                                            │ virtual_controller │
+                                            │    (evdev/uinput)  │
+                                            └───────────────────┘
 ```
 
 ### Observation Space
@@ -127,7 +127,7 @@ Verify the camera is visible:
 v4l2-ctl --list-devices
 ```
 
-The agent uses a 451-point minimap path to track lap progress. A pre-calibrated `track_path.npy` is included for the default track. To calibrate a new track:
+The agent uses a point-based minimap path to track lap progress. A pre-calibrated `track_path.npy` is included for the default track (Deep Forest Raceway).To calibrate a new track:
 
 ```bash
 uv run calibrate_track.py
@@ -243,7 +243,7 @@ Standard Nature-DQN CNN architecture (8×8/4, 4×4/2, 3×3/1) proven fast on a 3
 
 After ~2M steps of SAC training:
 - Agent consistently follows the racing line through straights and wide corners.
-- Successfully completed full laps during testing.
+- Successfully completed full laps during testing, although rarely.
 - Best episode reward: **+1167** (equivalent to ~350 waypoints ≈ 78% of track).
 
 ---
